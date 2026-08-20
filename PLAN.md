@@ -149,9 +149,11 @@ Explicit non-goal: hiding sender/destination **metadata** from the Worker (that'
 
 ## 9. Repo name
 
-**`nosms`** — direct symmetry with `nomail` (no + service); ecosystem-styled like `nomail`, `nodns`, `nak`. Service domain: `nosms.name` (check availability; fallback `nosms.voting`, `sendsats.ms`). Alternatives considered: `satsms` (cute but reads as "sats-ms"), `smsnomail` (clunky), `otp-relay` (generic).
+**`nosms`** — direct symmetry with `nomail` (no + service); ecosystem-styled like `nomail`, `nodns`, `nak`.
 
-**Public repo, recommended.** The trust proposition is "we can't read your OTPs" — that claim is only credible against auditable source: open Worker + poller, reproducible deploy (`wrangler deploy` from clean checkout), published llms.txt. What stays **private (never committed, gitignored + pre-commit hook)**: SIM purchase/rotation log, phone numbers touched, SIM budget history, gateway token values, the gateway **nsec** (Termux-only). The skill-set's git-secret-detection hooks already cover the nsec/token class.
+**Domain (DECIDED 2026-08-21): `nosms.orangesync.tech`** — Worker custom domain on the existing orangesync.tech Cloudflare zone (same zone as tollgate-infrastructure-kit; zero new domain purchase). A dedicated `nosms.name` can be added later if the service outgrows the election use case.
+
+**Public repo (DECIDED 2026-08-21): YES — live at github.com/felixfelix-bot/nosms.** What stays **private (never committed, gitignored + pre-commit hook)**: SIM purchase/rotation log, phone numbers touched, SIM budget history, gateway token values, the gateway **nsec** (Termux-only). The skill-set's git-secret-detection hooks already cover the nsec/token class.
 
 ## 10. Top 5 risks & mitigations
 
@@ -167,4 +169,11 @@ Explicit non-goal: hiding sender/destination **metadata** from the Worker (that'
 
 ---
 
-**Operator decisions requested before M1:** (1) repo/domain name sign-off; (2) mint choice for prod float; (3) election-day SIM count (recommend 2 carriers × 1 SIM + 1 spare); (4) whether coordinator key is whitelisted (free sends) or prepaid balance (recommended — exercises the payment path the service exists to prove).
+## Operator decisions (pre-M1)
+
+| # | Decision | Status |
+|---|---|---|
+| 1 | Repo name + domain | ✅ DECIDED 2026-08-21: `nosms`, public repo, `nosms.orangesync.tech` (Worker custom domain on existing orangesync.tech CF zone) |
+| 2 | Prod mint for Cashu escrow | ⏳ Open (testnut.cashu.space for dev/M1-M2; pick prod mint before first paid election — criteria: reliability history, nut17 CRR support for refunds) |
+| 3 | SIM count day one | ⏳ Open (recommendation: 2 SIMs, different carriers, both activated + warmed before election week) |
+| 4 | Coordinator key: election allowlist vs prepaid balance | ⏳ Open (recommendation: prepaid balance for everything; allowlist flag default OFF — see §4) |
