@@ -175,5 +175,6 @@ Explicit non-goal: hiding sender/destination **metadata** from the Worker (that'
 |---|---|---|
 | 1 | Repo name + domain | ✅ DECIDED 2026-08-21: `nosms`, public repo, `nosms.orangesync.tech` (Worker custom domain on existing orangesync.tech CF zone) |
 | 2 | Prod mint for Cashu escrow | ⏳ Open (testnut.cashu.space for dev/M1-M2; pick prod mint before first paid election — criteria: reliability history, nut17 CRR support for refunds) |
-| 3 | SIM count day one | ⏳ Open (recommendation: 2 SIMs, different carriers, both activated + warmed before election week) |
+| 3 | SIM count day one | 🔻 SUPERSEDED by #5 — SIM burner gateway demoted to optional offline fallback (keep 1 spare SIM only if offline redundancy wanted) |
 | 4 | Coordinator key: election allowlist vs prepaid balance | ⏳ Open (recommendation: prepaid balance for everything; allowlist flag default OFF — see §4) |
+| 5 | India delivery route | ✅ DECIDED 2026-08-21 (Felix): DLT-registered API providers (Fast2SMS / 2Factor.in / MSG91 class) become PRIMARY for +91. India operator (see handover doc) completes DLT entity + template registration, provider API key lives in Worker secret. Android burner gateway demoted to fallback. Rationale: reliability + instant scale beat permissionless-property concern for Auroville (known operator, KYC acceptable); provider adapters already built at github.com/felixfelix-bot/sms-gateway (Telnyx + MSG91, provider-agnostic — Fast2SMS/2Factor adapters queued). |
