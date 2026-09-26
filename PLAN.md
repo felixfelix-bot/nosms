@@ -95,22 +95,53 @@ SMS numbers cost money, unlike a mail domain, so "free receive" is a cost decisi
 
 | # | Decision | Recommendation | Status |
 |---|---|---|---|
-| 1 | Repo + domain | `nosms`, public, `nosms.orangesync.tech` (this Signal group's `cashu.sms.orangesync.tech` as branded alias) | ⏳ |
-| 2 | Scope | public product (cashu.email parity); Auroville election = first customer, not the design driver | ⏳ |
-| 3 | v1 direction | outbound postage only; inbound = option (1) in §3 | ⏳ |
-| 4 | Route + provider key | Telnyx first (public docs, testable today); bitcall adapter once an account exists | ⏳ |
-| 5 | Runtime | vps2 Caddy + Python (§4) | ⏳ |
-| 6 | Repo shape | new `nosms` importing `sms-gateway` as a lib | ⏳ |
-| 7 | Prod mint for escrow | testnut for dev; pick before first paid traffic (reliability + NUT-17 CRR) | ⏳ |
+| 1 | Repo + domain | `nosms`, public, `nosms.orangesync.tech` (this Signal group's `cashu.sms.orangesync.tech` as branded alias) | ✅ |
+| 2 | Scope | public product (cashu.email parity); Auroville election = first customer, not the design driver | ✅ |
+| 3 | v1 direction | outbound postage only; inbound = option (1) in §3 | ✅ |
+| 4 | Route + provider key | Telnyx first (public docs, testable today); bitcall adapter once an account exists | ✅ (route blocked at the account level — see §8a) |
+| 5 | Runtime | vps2 Caddy + Python (§4) | ✅ |
+| 6 | Repo shape | new `nosms` importing `sms-gateway` as a lib | ✅ |
+| 7 | Prod mint for escrow | testnut for dev; pick before first paid traffic (reliability + NUT-17 CRR) | ✅ |
 | 8 | `+91` delivery | NOT required (operator, 2026-09-23) ⇒ DLT parked | ✅ |
 | 9 | JMP.chat as backend | REJECTED (automation ban, US/CA-only, no SMS-over-SIP) | ✅ |
+
+**Ratification note (2026-09-26).** 1–7 were accepted as recommended on the operator's
+"telnyx is now funded. please continue." — i.e. the recommendation set, not a per-item debate.
+Any item can still be reversed by the operator; none of them is load-bearing for M1a.
+
+### 8a. Telnyx is funded but cannot sell us a sending number (live finding, 2026-09-26)
+
+Balance is now **15.41 USD** (funding: done). The numbers API still refuses every order:
+
+- US local **and** US toll-free orders both return 422 `10027` *"We don't recognize the number(s)
+  […]. Did you first search for the number(s)?"* — because inventory is served **redacted**
+  (`+16183xxxxxx`). A redacted number can never be ordered.
+- A 63-country scan: every country's numbers come back redacted **except Portugal**, whose local
+  numbers are shown in full and have **no SMS feature** (`voice`, `fax`, `emergency`,
+  `local_calling` only).
+- `/v2/number_reservations` → 403 `10038` "not permitted at this account level"; the targeted
+  `filter[phone_number][starts_with]` search → 403; `/v2/porting_orders` → 403.
+- Telnyx documents exactly this: *"Full number display limited to local numbers of the account's
+  country of origin"* and *"Number ordering limited to local numbers whose country code matches the
+  account's country of origin"*
+  (<https://developers.telnyx.com/docs/account-setup/levels-and-capabilities/trial>, `/paid`,
+  `/verified`). At this tier 10DLC and Toll-Free verification are also *no access*.
+
+⇒ The account's origin country is **PT** and it sits at the **Trial** tier: the only orderable
+inventory is voice-only. This is a portal/KYC task, not an API task — tracked as the operator card
+on board `sms-gateway`. M1a/M1b proceed behind `FakeTransport` in the meantime; the live end-to-end
+send is gated on this card.
 
 ---
 
 ## 8. Operator action items (only the human can do these)
 
-1. **Fund a provider** — Telnyx (key) or bitcall (crypto top-up, $10–20 → DID + ~10 test SMS to measure real per-SMS cost and DLR behaviour).
-2. Settle decisions 1–6 above (a one-word "all recs" is enough to unblock M1).
+1. **Fund a provider** — ✅ done 2026-09-26 (Telnyx, balance 15.41 USD). The route is still blocked at
+   the **account level** (§8a): origin country PT + Trial tier ⇒ no SMS-capable number can be ordered.
+   Portal work only: check/change the account country, or raise the tier to Paid/Verified.
+2. Settle decisions 1–6 above — ✅ done 2026-09-26 (accepted as recommended, see the ratification note).
+3. **Provide one destination number** for the first live test SMS and verify it in the portal
+   (`GET /v2/verified_numbers` is empty; the trial tier only sends to a verified destination).
 
 ---
 
