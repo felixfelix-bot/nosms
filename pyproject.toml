@@ -1,0 +1,23 @@
+[project]
+name = "nosms"
+version = "0.1.0"
+description = "SMS for nostr keys — the SMS version of cashu.email (sats-side building blocks)"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q --strict-markers --cov=nosms --cov-report=term-missing --cov-fail-under=80"
+filterwarnings = ["error"]
+
+[tool.coverage.run]
+branch = true
+source = ["nosms"]
+
+[tool.coverage.report]
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@(abc\\.)?abstractmethod",
+    "\\.\\.\\.",
+]

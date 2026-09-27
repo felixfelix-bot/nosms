@@ -1,0 +1,41 @@
+# gitleaks configuration for nosms — exactly one exception, and here is why.
+#
+# WHY THIS FILE EXISTS
+#   Machankura (8333.mobi) publishes a `nostrPubkey` in the LNURL-pay
+#   payRequest document that every payer receives:
+#
+#     GET https://8333.mobi/.well-known/lnurlp/<identifier>
+#     -> {"...","allowsNostr":true,
+#         "nostrPubkey":"9b2b23d5f8a7112903c4dc600b0a92c4317918fcfcfbd2bf55a758f1b9a4feca", ...}
+#
+#   It is a *public* key, published to the world by design, and it can move no
+#   funds on its own. gitleaks' `generic-api-key` rule fires on it only because
+#   it is 64 hex characters with high entropy.
+#
+# WHY THE LITERAL IS KEPT RATHER THAN SCRUBBED
+#   tests/fixtures/lnurlp_sigidli_200.json is the live response stored
+#   byte-for-byte, and the suite pins it to the Content-Length the server
+#   actually sent (457). Redacting the pubkey would destroy the fixture's only
+#   value: proving that we parse what the service really answers, including
+#   `allowsNostr` / `nostrPubkey` handling.
+#
+# SCOPE
+#   One literal, one context. `regexTarget = "line"` and the mandatory
+#   `nostr_?pub_?key` context mean the same 64 hex characters appearing
+#   anywhere else in this repo are still a finding. No path is exempted, no
+#   rule is disabled, and `useDefault = true` keeps the full default rule set.
+#
+# SCHEMA NOTE
+#   `[allowlist]` (singular). `[[allowlists]]` (plural) is silently ignored by
+#   gitleaks 8.21.x — verified here on 2026-09-27 and documented in
+#   hermes-kanban/.gitleaks.toml.
+
+title = "nosms"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Machankura's PUBLIC LNURL-pay nostrPubkey, published in every payRequest response (not a credential)"
+regexTarget = "line"
+regexes = ['''(?i)nostr[_-]?pub[_-]?key\D{0,20}9b2b23d5f8a7112903c4dc600b0a92c4317918fcfcfbd2bf55a758f1b9a4feca''']
