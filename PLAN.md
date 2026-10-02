@@ -151,3 +151,86 @@ send is gated on this card.
 - <https://jmp.chat/faq> — automation/business prohibition, numbers, SIP limitations (cached)
 - <https://bitcall.io/llms.txt>, `/llms-full.txt` — crypto payment, A2P SMS / DID / SIP catalogue (cached)
 - `~/repos/sms-gateway`, `~/handover-sms-gateway-india-operator.md`, `auditable-voting/web/src/otpDelivery/`
+
+---
+
+## 10. Machine-facing surfaces — paid CVM server + napplet (operator-ordered 2026-10-02)
+
+**Status:** queued. **Urgency: SOON** (operator, 2026-10-02: *"go, urgency: soon"*).
+Quota basis at classification: `zai-quota-gate.sh` exit 0, but the flat router was
+returning *all providers exhausted* for every model, so the work is release-gated on
+a **live completion probe**, not on the gate's verdict alone.
+
+Board `sms-gateway`: `t_119a4ab8` (CVM server), `t_4fa1415a` (napplet),
+`t_3ccdef32` (M1a, surface the HTTP API). All three release together via
+`nosms-m1a-release-watch.sh` when the router can actually serve.
+
+### 10.1 Why two surfaces, not one
+
+`cashu.email` is documented for machines (`llms.txt`) and driven by humans through a
+web page. nosms needs the *same* pair, but the two surfaces cannot share a client:
+an napplet runs in a sandbox with **no `fetch`, no WebSocket, no HTTP verb at all** —
+`NAP-RESOURCE` is `bytes`-in/`bytes`-out, so a `POST /api/send` with a JSON body is
+**not expressible** from a napplet (verified against the SDK types). The machine
+surface therefore has to be the Nostr transport, not the HTTP one.
+
+```
+napplet (UI only: no keys, no tokens, no network)
+  └─ shell NAP-CVM (`cvm` domain)   ← the shell signs, encrypts, pays
+        └─ paid CVM server (npub-addressed; kind 25910 JSON-RPC)
+              └─ Transport interface → email-to-SMS rail (best-effort) | Telnyx (post-KYC)
+```
+
+The HTTP API (§4) stays the surface for scripts, `curl` and LLMs that *do* have network
+access; the CVM surface is for in-shell clients. Both sit on the same `Transport`.
+
+### 10.2 CVM server
+
+- **Transport:** kind `25910` (ephemeral) for traffic; kinds `11316`–`11320` for the
+  CEP-6 service catalog so `cvmi discover` finds it. Discovery does **not** rely on the
+  ephemeral kind.
+- **Tools:** `sms.send` (paid), `sms.status` (free), `sms.pricing` + `sms.capabilities`
+  (free). `sms.capabilities` reports `best_effort` and `delivery_receipts` **from the
+  rail itself**, never hardcoded.
+- **Payment (CEP-8):** `cap:tool:sms.send:<sats>:sats` — 100 domestic / 500 international,
+  nosms parity. `pmi: bitcoin-cashu` first (Cashu-native, refund is a token, no LN node
+  needed); `bitcoin-lightning-bolt11` + NWC as a second PMI later. Lifecycle
+  `explicit_gating`: **nothing is sent before payment lands**, and a hard, detectable
+  failure triggers an automatic refund.
+- **Implementation:** Python + `nostr_sdk` bindings — verified 0.58 s gift-wrap round
+  trip; the TypeScript `NostrServerTransport` silently hangs (skill-documented).
+- **Constraints that bite:** client and server MUST use different keys (a shared key
+  echoes its own requests); `#p` filtering on kind 1059 is unreliable on some relays, so
+  subscribe broadly and filter client-side; working relays are `nostr.mom`,
+  `relay.primal.net`, `nos.lol`, `relay2.contextvm.org`, `relay.nostr.band` —
+  `relay.contextvm.org` is unreachable.
+
+### 10.3 Napplet
+
+- **Hard requirement:** `cvm` only. Every other domain optional, each shell call wrapped
+  in `try/catch` with an explicit fallback (a partial shell otherwise fails conformance).
+- **llms.txt parity:** `llms.txt` + `llms-full.txt` are bundled at build time (`?raw`)
+  **and** the live price + capability flags are read from the server, so the displayed
+  contract cannot drift from the server's actual behaviour. The "best effort, no
+  delivery receipt" warning is rendered from the server's own flags.
+- **One job:** destination, body, price shown *before* send, `sms.status` after.
+- **The napplet never holds a token or a key.** Payment runs through the shell's CEP-8
+  flow; any design that puts an ecash token in napplet `storage` is wrong by construction.
+- **Boundary hygiene:** no `nsec`, no `localStorage`, no direct `fetch`, no `window.nostr`.
+
+### 10.4 Exclusions and honesty constraints
+
+- **JMP/Cheogram is NOT service infrastructure.** Its FAQ prohibits automated or business
+  use. It stays the operator's personal number and the inbound-delivery QA rail. Shipping
+  a paid public service on it would break both the product and the ToS.
+- **The v1 rail has no delivery receipts.** Price and copy must say so on both surfaces;
+  a "delivered" claim we cannot observe is the one thing this service must never emit.
+- **No simulated data.** Capability flags, prices and statuses come from the live rail or
+  they are absent (standing operator rule).
+
+### 10.5 Milestones added
+
+| # | Scope | Exit criterion |
+|---|---|---|
+| **M5** | Paid CVM server: catalog announcement, `sms.pricing`/`sms.capabilities`/`sms.status`, then `sms.send` behind CEP-8 Cashu gating + refund on detectable failure | a second key pays a testnut token via `cvmi call` and a real SMS lands on a handset through the email rail, result honestly labelled best-effort |
+| **M6** | Napplet wrapping the CVM: one-screen sender + bundled `llms.txt`/`llms-full.txt` + live capability flags | `pnpm verify` + `pnpm test:conformance` green in a real sandbox (skips reported as skips), deployed to Blossom + relays, live call from inside Paja returns the server's real pricing |
