@@ -1,0 +1,6 @@
+# nosms service core runtime dependencies
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pydantic>=2.6
+# BIP-340 schnorr verification for NIP-98 (libsecp256k1 bindings)
+coincurve>=19.0
