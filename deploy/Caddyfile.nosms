@@ -1,0 +1,6 @@
+# Caddy vhost for nosms (append to the existing Caddyfile on vps2).
+# Caddy already terminates TLS for *.orangesync.tech; this only proxies the app.
+nosms.orangesync.tech {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8088
+}

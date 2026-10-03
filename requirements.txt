@@ -1,0 +1,5 @@
+# nosms runtime dependencies (M1a service core)
+fastapi>=0.115
+uvicorn[standard]>=0.30
+# BIP-340 schnorr verification for NIP-98 (kind 27235) auth
+coincurve>=20.0
