@@ -16,7 +16,7 @@ from .pricing import DEFAULT_PRICE, PREFIX_PRICES
 #: A real, signed kind-27235 event used as the copy-pasteable example.
 NIP98_EXAMPLE_JSON = (
     '{"id":"a8debd9cbd514a409b23e48930ef1d2c0302601cb6e3a7d3367d7df5b4845705",'
-    '"pubkey":"f76a39d05686e34a4420897e359371836145dd3973e3982568b60f8433adde6e",'
+    '"pubkey":"f76a39d05686e34a4420897e359371836145dd3973e3982568b60f8433adde6e",'  # gitleaks:allow (public key material, not a credential)
     '"created_at":1760000000,"kind":27235,'
     '"tags":[["u","https://nosms.orangesync.tech/api/send"],["method","POST"]],'
     '"content":"",'
