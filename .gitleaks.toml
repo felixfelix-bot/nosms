@@ -1,0 +1,12 @@
+title = "nosms gitleaks config"
+
+# app/llms.py quotes the NIP-98 specification's own example event verbatim so
+# agents get a copy-pasteable header. Its `pubkey` and `sig` are PUBLIC data
+# from the spec (https://github.com/nostr-protocol/nips/blob/master/98.md),
+# not credentials. Allowlist those two values only.
+[allowlist]
+description = "NIP-98 spec example event public key + signature (public data)"
+regexes = [
+  '''63fe6318dc58583cfe16810f86dd09e18bfd76aabc24a0081ce2856f330504ed''',
+  '''5ed9d8ec958bc854f997bdc24ac337d005af372324747efe4a00e24f4c30437ff4dd8308684bed467d9d6be3e5a517bb43b1732cc7d33949a3aaf86705c22184''',
+]
