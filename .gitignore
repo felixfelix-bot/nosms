@@ -6,3 +6,8 @@ coverage.xml
 .venv/
 venv/
 .evidence/
+
+# CVM server/client ephemeral keys and local venv
+.cvm-server.nsec
+.cvm-client.nsec
+napplet/.napplet/keys*
