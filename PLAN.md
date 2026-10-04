@@ -234,3 +234,89 @@ access; the CVM surface is for in-shell clients. Both sit on the same `Transport
 |---|---|---|
 | **M5** | Paid CVM server: catalog announcement, `sms.pricing`/`sms.capabilities`/`sms.status`, then `sms.send` behind CEP-8 Cashu gating + refund on detectable failure | a second key pays a testnut token via `cvmi call` and a real SMS lands on a handset through the email rail, result honestly labelled best-effort |
 | **M6** | Napplet wrapping the CVM: one-screen sender + bundled `llms.txt`/`llms-full.txt` + live capability flags | `pnpm verify` + `pnpm test:conformance` green in a real sandbox (skips reported as skips), deployed to Blossom + relays, live call from inside Paja returns the server's real pricing |
+
+---
+
+## 11. JMP as a CVM rail — what it would take (answered 2026-10-05)
+
+**Status:** answered; one operator decision outstanding. **Urgency: SOON**
+(operator, 2026-10-05: *"plan now, build as soon as the freeze lifts"*).
+
+**Question (operator, 2026-10-05):** *"what would it take to make a cvm service for
+our JMP chat phone number integration?"*
+
+**Short answer: JMP cannot be the rail of a *public* CVM service — that was already
+decided (decision 9, §10.4). It can be the rail of a *private, owner-only* one, and
+that is a different, much smaller build.**
+
+### 11.1 The three variants
+
+| Variant | Rail | Payment | Status |
+|---|---|---|---|
+| **A. Public paid CVM** | email-to-SMS gateway (v1, best-effort) / Telnyx post-KYC | CEP-8 Cashu `explicit_gating`, 100/500 sats | carded: `t_119a4ab8` (server), `t_4fa1415a` (napplet) |
+| **B. Private owner-only CVM** | the operator's own JMP/Cheogram line | none — npub allowlist (`owner_only`) | **not built, not carded — needs operator decision (§11.4)** |
+| **C. JMP as inbound QA rail** | JMP | n/a | its assigned role; zero new work |
+
+### 11.2 Why JMP is excluded from A — live evidence, not opinion
+
+JMP's own FAQ, checked live 2026-09-23, verbatim:
+
+> "Can I use JMP for Automated or Business Purposes? **No**, the P2P routes we use to
+> exchange messages with the phone system must be [used directly by humans]; no
+> automations, marketing, or campaigns."
+
+Recorded in `skills/devops/programmatic-sms-delivery/SKILL.md` (provider table:
+*"JMP.chat … **ToS forbids the use case** … ❌ Rejected — do not build a service on
+it"*) and in PLAN decision 9. Also: **US/Canada numbers only**, and SMS/MMS is **not
+available over SIP**.
+
+### 11.3 What B would actually take
+
+The plumbing exists and is proven **for the inbound-reply direction**:
+
+- `~/.hermes/profiles/manager/scripts/jmp-sms-listener.py` (151 lines, slixmpp) holds a
+  long-lived XMPP client, logs every inbound SMS to SQLite, and already sends outbound
+  via `msg.reply(REPLY_TEXT).send()`.
+- Inbound SMS arrives as an ordinary XMPP chat message from `+<E164>@cheogram.com`
+  (`programmable-sms-rails/references/jmp-cheogram-xmpp-provisioning.md`).
+
+Missing pieces for a **cold** outbound send:
+
+1. **One live verification** that a cold message to `+<E164>@cheogram.com` (not a reply
+   to an inbound peer) is accepted — JMP's anti-abuse gate requires **one real inbound
+   text before the account may send** (provisioning ref). This is the single unverified link.
+2. **Owner allowlist** replacing the CEP-8 gate — the contract already reserves the
+   `owner_only` error token (`state/nosms-cvm-llms.txt` §Errors).
+3. **CVM server layer** reused as-is from §10.2 (kind 25910, announcements 11316–11320,
+   tools `sms.send` / `sms.status` / `sms.capabilities`); only the payment gate and the
+   `Transport` implementation change.
+4. **Honest capability flags** on both surfaces: `best_effort: true`,
+   `delivery_receipts: false`, `countries: [US, CA]`.
+
+**Effort:** ~1 worker card once M5's server exists; ~2 standalone. Cost is not the
+blocker — **the ToS is**: the prohibition is on *automated* use, not only business use,
+so B is grey-area even in private. Recommendation: B only as strictly personal,
+private, low-volume — or not at all.
+
+### 11.4 Decision needed (operator)
+
+**Which rail does the CVM service ship on?**
+
+- (a) email-to-SMS / Telnyx, **public paid** — proceed with `t_119a4ab8` as carded. **Recommended** (the only variant that can be sold).
+- (b) **own JMP line, private owner-only** — no resale, no payment, accepts ToS grey-area; adds one card + one live send verification.
+- (c) (a) + JMP kept as inbound-QA only — **recommended combination**; JMP keeps its assigned role.
+- (d) hold — no card changes.
+
+### 11.5 Open question — repo home
+
+`cvm-service-kit` and `cvm-registry` now live under the **`cvm-services` org**; `nosms`
+still lives at `felixfelix-bot/nosms`. Should `nosms` move under the org once M5 lands?
+Not blocking; recorded so it does not get lost.
+
+### 11.6 Consultant review deferred — stated gap, not a silent one
+
+Three consultant subagents were dispatched 2026-10-05 00:58 to review this section
+independently (spec-fit, JMP rail reality, phased effort). All three returned
+**HTTP 503 `all providers exhausted (flat router)`, `capacity_exhausted: true`** after
+3 retries — zero output. This section therefore rests on **first-party file reads
+only**. Re-run the review when the router has capacity.
