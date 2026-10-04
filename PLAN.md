@@ -298,14 +298,20 @@ blocker — **the ToS is**: the prohibition is on *automated* use, not only busi
 so B is grey-area even in private. Recommendation: B only as strictly personal,
 private, low-volume — or not at all.
 
-### 11.4 Decision needed (operator)
+### 11.4 DECIDED (operator, 2026-10-05) — ship public, on the JMP rail
 
-**Which rail does the CVM service ship on?**
+Operator override, verbatim: *"I realize its not allowed, but lets do it anyway."*
+Recorded as **ADR-0002** (`docs/adr/0002-jmp-rail-override-and-risk-pricing.md`).
 
-- (a) email-to-SMS / Telnyx, **public paid** — proceed with `t_119a4ab8` as carded. **Recommended** (the only variant that can be sold).
-- (b) **own JMP line, private owner-only** — no resale, no payment, accepts ToS grey-area; adds one card + one live send verification.
-- (c) (a) + JMP kept as inbound-QA only — **recommended combination**; JMP keeps its assigned role.
-- (d) hold — no card changes.
+- The **v1 rail IS the operator's own JMP/Cheogram line**, sold as a paid public CVM
+  service. This supersedes decision 9 and §10.4 **for the v1 rail only**.
+- Accepted risks are named in the ADR (termination, personal number, no receipts, US/CA
+  only, anti-abuse gate). The operator owns the decision; the agent implements.
+- Compensating controls: risk-premium pricing (§12), low volume pacing, degrade path to
+  the email rail behind the same `Transport`, auto-refund on paid-but-unsent, and no
+  delivery claims on any surface.
+- Variants (a) and (c) in the previous draft of this section are **superseded**; the
+  private owner-only variant (b) is subsumed — the service is public, the rail is JMP.
 
 ### 11.5 Open question — repo home
 
@@ -320,3 +326,39 @@ independently (spec-fit, JMP rail reality, phased effort). All three returned
 **HTTP 503 `all providers exhausted (flat router)`, `capacity_exhausted: true`** after
 3 retries — zero output. This section therefore rests on **first-party file reads
 only**. Re-run the review when the router has capacity.
+
+---
+
+## 12. Pricing — rugpull-risk premium (operator-directed 2026-10-05)
+
+Operator instruction: *"make each sms half as costly as the sim card for the time being
+and we gradually lower the price if we find that abuse isn't an issue"*.
+
+**Formula** (authoritative source: `ADR-0002`; `sms.pricing` serves it live):
+
+```
+price_sats = ceil(MULT * rail_replacement_usd * sats_per_usd)
+```
+
+| Input | Value | Source |
+|---|---|---|
+| `rail_replacement_usd` | 4.99 | JMP plan: $4.99/mo unlimited in+out SMS/MMS **including international** (`sms-provider-matrix.md`, verified 2026-09-23) |
+| `MULT` | 0.5 (start) | operator directive |
+| `sats_per_usd` | live | Binance `BTCUSDT` — **86,462** at 2026-10-05 |
+
+**Default price: 0.5 x 4.99 = $2.495 -> 2,886 sats -> rounded 2,900 sats**, flat for
+domestic and international (JMP is unlimited incl. international, so destination no
+longer maps to cost — this **supersedes the earlier 100 / 500 sats split**).
+
+**Walk-down:** review every 100 sends; zero abuse flags -> `MULT` -0.05 (2,900 -> 2,600
+sats at today's BTC); any abuse event -> reset to 0.5 and hold 30 days; hard floor
+`max(rail marginal cost, 1,000 sats)`.
+
+**Rationale:** the price absorbs the cost of JMP terminating the account (the accepted
+risk in ADR-0002) — a handful of sends funds replacing the rail — and doubles as an
+economic spam filter on a personal line.
+
+**Load-bearing unknowns, stated:** the operator's "sim card" reference is read here as
+the rail's replacement cost (the JMP plan). If the intended basis was a one-off prepaid
+SIM purchase (a different number), only `rail_replacement_usd` changes; the formula and
+the walk-down are unaffected.
