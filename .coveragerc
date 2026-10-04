@@ -1,0 +1,33 @@
+# Coverage scope for the gate that `pytest` runs (see pytest.ini addopts).
+#
+# In scope: the service package `app/` and the scripts the service actually runs
+# in production — `scripts/refund_sweep.py` is the body of the
+# nosms-refund-sweep.timer unit, so a silent breakage there is a money bug.
+#
+# Omitted, with the reason, because every one of them would report a false 0%:
+#
+#   scripts/live_escrow_roundtrip.py  network harness: real testnut round-trip,
+#                                     run by hand (prints a JSON report), never
+#                                     imported by the suite.
+#   scripts/live_probe.py             network harness: drives a *running* server
+#                                     over real HTTP, never imported.
+#   scripts/make_v4_fixture.py        one-shot generator for the checked-in CBOR
+#                                     fixture; run when the fixture is rebuilt.
+#   scripts/render_llms.py            build/CLI helper: exercised for real as a
+#                                     subprocess by tests/test_llms_artifact.py,
+#                                     which import-level coverage cannot see.
+[run]
+omit =
+    scripts/live_escrow_roundtrip.py
+    scripts/live_probe.py
+    scripts/make_v4_fixture.py
+    scripts/render_llms.py
+
+[report]
+# The card's bar: >= 80% on the service + the timer body.
+fail_under = 80
+show_missing = True
+exclude_lines =
+    pragma: no cover
+    if TYPE_CHECKING:
+    if __name__ == .__main__.:
