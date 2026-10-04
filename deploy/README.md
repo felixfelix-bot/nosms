@@ -110,6 +110,10 @@ auto-refunded (silence is not proof of non-delivery).
 ./.venv/bin/python -m pytest            # suite + the >=80% coverage gate (see .coveragerc)
 ```
 
+`pytest` is the gate: `--cov-fail-under=80` lives in `addopts`, so a *targeted*
+run (e.g. `pytest tests/test_send.py`) will trip the coverage bar by design — add
+`-o addopts=""` when you are iterating on one file.
+
 Two network-touching checks are deliberately *not* part of the suite:
 
 - `scripts/live_escrow_roundtrip.py [mint_url]` — real mint round-trip (mint → NUT-07 →

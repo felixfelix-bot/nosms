@@ -151,15 +151,15 @@ Every 4xx/5xx response carries two headers:
 - `X-Reason` — short machine token to branch on.
 - `X-Hint` — one human-readable sentence.
 
-Tokens you can rely on: `auth_missing`, `auth_invalid`, `auth_expired`,
-`auth_replayed`, `auth_url_mismatch`, `auth_method_mismatch`,
+Tokens you can rely on: `bad_request`, `auth_missing`, `auth_invalid`,
+`auth_expired`, `auth_replayed`, `auth_url_mismatch`, `auth_method_mismatch`,
 `auth_payload_mismatch`, `bad_destination`, `empty_body`, `body_too_long`,
 `token_missing`, `token_invalid`, `token_unsupported`, `token_empty`,
 `token_wrong_mint`, `token_already_spent`, `token_state_unknown`,
 `insufficient_funds`, `destination_cooldown`, `daily_cap_reached`,
 `mint_error`, `mint_unreachable`, `transport_error`, `not_refunded`,
-`invalid_request`, `not_found`, `method_not_allowed`, `send_not_implemented`,
-`internal_error`.
+`invalid_request`, `not_found`, `method_not_allowed`,
+`llms_full_not_implemented`, `internal_error`.
 
 A bare `401` is never returned; always read `X-Reason`.
 
