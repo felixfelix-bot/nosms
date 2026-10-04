@@ -1,0 +1,33 @@
+{
+  "name": "nosms-sender",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "type-check": "tsc --noEmit",
+    "test:unit": "vitest",
+    "test:coverage": "vitest --run --coverage",
+    "verify": "pnpm test:unit --run && pnpm type-check && pnpm build",
+    "test:conformance": "pnpm build && napplet-conformance ./dist",
+    "test:conformance:ui": "napplet-conformance --ui . --exec \"vite build --watch\"",
+    "paja": "kehto paja --target-url http://127.0.0.1:5173 -- pnpm vite --host 127.0.0.1",
+    "paja:preview": "kehto paja --target-url http://127.0.0.1:5173 -- pnpm preview --host 127.0.0.1"
+  },
+  "dependencies": {
+    "@napplet/sdk": "^0.24.4"
+  },
+  "devDependencies": {
+    "@napplet/conformance-cli": "^0.2.15",
+    "@napplet/vite-plugin": "^0.11.2",
+    "@vitest/coverage-v8": "^4.1.10",
+    "jsdom": "^26.1.0",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.2",
+    "vitest": "^4.1.10"
+  },
+  "packageManager": "pnpm@10.8.0",
+  "license": "MIT"
+}

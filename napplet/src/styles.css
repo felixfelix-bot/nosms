@@ -1,0 +1,231 @@
+/*
+ * nosms — whole-surface theme.
+ *
+ * Derived tokens (surface, border, muted, warn) all read the three runtime
+ * variables, so NAP-THEME applied to html/body/#app recolours everything. The
+ * fallback palette below applies when the runtime did not inject `theme`.
+ */
+
+:root {
+  --bg: #101413;
+  --fg: #e8ece9;
+  --primary: #f2c14e;
+  --surface: color-mix(in srgb, var(--fg) 6%, var(--bg));
+  --border: color-mix(in srgb, var(--fg) 18%, var(--bg));
+  --muted: color-mix(in srgb, var(--fg) 55%, var(--bg));
+  --warn: #e0a33e;
+  --error: #e06c5a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+#app {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.toolbar {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+button {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--primary);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+button.primary {
+  border-color: var(--primary);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.status {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.status-ok {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
+.status-warn {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.status-error {
+  color: var(--error);
+  border-color: var(--error);
+}
+
+.facts {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0;
+}
+
+.fact {
+  display: flex;
+  gap: 4px;
+  align-items: baseline;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.fact dt {
+  color: var(--muted);
+}
+
+.fact dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.workspace {
+  flex: 1;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-height: 0;
+}
+
+.pane {
+  flex: 1 1 260px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.field-label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+input,
+textarea {
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+
+input:focus,
+textarea:focus {
+  outline: 1px solid var(--primary);
+  border-color: var(--primary);
+}
+
+textarea {
+  resize: vertical;
+}
+
+.price-line {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.price {
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.price-source {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.warning {
+  margin: 0;
+  padding: 4px 6px;
+  border-left: 2px solid var(--muted);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.warning[data-state='on'] {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.output {
+  flex: 1;
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.field-lookup {
+  margin-top: 4px;
+}
+
+@media (max-width: 240px) {
+  .label {
+    display: none;
+  }
+
+  .facts {
+    display: none;
+  }
+}

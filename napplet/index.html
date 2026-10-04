@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>nosms</title>
+  </head>
+  <body>
+    <main id="app" class="app">
+      <div class="toolbar" role="toolbar" aria-label="Session">
+        <button id="connectButton" type="button" title="Reach the ContextVM server">
+          <span aria-hidden="true">⚡</span><span class="label">Connect</span>
+        </button>
+        <button id="contractButton" type="button" title="Show the agent contract">
+          <span aria-hidden="true">¶</span><span class="label">Contract</span>
+        </button>
+        <output id="status" class="status status-idle" aria-live="polite">Idle</output>
+      </div>
+
+      <dl id="facts" class="facts" aria-label="Live server facts">
+        <div class="fact"><dt>rail</dt><dd id="factRail">–</dd></div>
+        <div class="fact"><dt>best effort</dt><dd id="factBestEffort">–</dd></div>
+        <div class="fact"><dt>receipts</dt><dd id="factReceipts">–</dd></div>
+        <div class="fact"><dt>server</dt><dd id="factServer">none</dd></div>
+      </dl>
+
+      <div class="workspace">
+        <section class="pane" aria-label="Send a message">
+          <label class="field">
+            <span class="field-label">Destination (E.164)</span>
+            <input id="toInput" type="tel" inputmode="tel" autocomplete="off"
+                   placeholder="+141****0100" />
+          </label>
+          <label class="field">
+            <span class="field-label">Message</span>
+            <textarea id="bodyInput" rows="3" placeholder="Hello from nosms"></textarea>
+          </label>
+          <div class="price-line">
+            <span id="priceValue" class="price">enter a number</span>
+            <span id="priceSource" class="price-source">bundled table</span>
+          </div>
+          <p id="capWarning" class="warning" role="note"></p>
+          <button id="sendButton" class="primary" type="button" disabled>
+            <span aria-hidden="true">➤</span><span class="label">Send</span>
+          </button>
+          <label class="field field-lookup">
+            <span class="field-label">Look up a send</span>
+            <input id="lookupInput" type="text" autocomplete="off" placeholder="send id" />
+          </label>
+          <button id="lookupButton" class="secondary" type="button">
+            <span class="label">Status</span>
+          </button>
+        </section>
+
+        <section class="pane" aria-label="Result">
+          <pre id="output" class="output"></pre>
+        </section>
+      </div>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

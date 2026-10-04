@@ -1,0 +1,13 @@
+{
+  "_generated_by": "scripts/export_contract.py from app/pricing.py",
+  "unit": "sats",
+  "prefixes": {
+    "+351": 500,
+    "+49": 500,
+    "+44": 500,
+    "+91": 500,
+    "+1": 100
+  },
+  "default": 500,
+  "min_e164_len": 8
+}

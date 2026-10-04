@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "sourceDir": ".",
+  "relays": [
+    "wss://nos.lol",
+    "wss://relay.primal.net",
+    "wss://relay.nostr.band"
+  ],
+  "blossomServers": [
+    "https://blossom.primal.net",
+    "https://nostr.build"
+  ],
+  "defaultTarget": "named",
+  "named": [
+    "nosms-sender"
+  ],
+  "discover": {
+    "enabled": true,
+    "roots": [
+      "."
+    ]
+  },
+  "signing": {
+    "mode": "interactive"
+  },
+  "conformance": {
+    "command": "napplet-conformance"
+  },
+  "paja": {
+    "command": "kehto"
+  },
+  "metadata": {
+    "name": "nosms-sender",
+    "title": "nosms",
+    "description": "Send an SMS over ContextVM — pay per send in Cashu",
+    "archetypes": []
+  }
+}

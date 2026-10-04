@@ -1,0 +1,127 @@
+# nosms — full manual (llms-full.txt)
+
+This is the expandable companion to `llms.txt`. `llms.txt` is the contract;
+this file is the manual. Both are served by the CVM server (`docs` and
+`llms-full` tools) and bundled into the napplet at build time so a human or an
+agent can read them offline.
+
+## 1. What the service is
+
+nosms sends one SMS to one phone number on behalf of a nostr key. There is no
+account, no API key and no signup: your nostr key is your identity and you pay
+per message in sats, postage-style. The v1 rail is a single personal
+JMP/Cheogram line, so treat volume limits as real.
+
+## 2. Two surfaces, one transport contract
+
+| Surface | Who uses it | How |
+|---|---|---|
+| ContextVM (MCP over Nostr, kind `25910`) | agents, in-shell clients | call the tools by server npub |
+| HTTP (`https://nosms.orangesync.tech`) | scripts, `curl`, LLMs with network access | NIP-98-authenticated `POST /api/send` |
+
+Both sit on the same `Transport` interface and the same price table. A napplet
+cannot use the HTTP surface: `NAP-RESOURCE` is bytes-in/bytes-out with no HTTP
+verb, so a `POST` with a body is not expressible from a sandboxed napplet. That
+is exactly why the napplet wraps the CVM.
+
+## 3. Tools
+
+### `sms.send(to, body)` — PAID
+
+- `to` — E.164 destination (`+141****4652`). Formatting is stripped; a string
+  with no digits is `bad_destination`.
+- `body` — the message text.
+
+Never sends before payment lands (`explicit_gating`). The shell answers the
+CEP-8 `payment_required` notification and pays; a payment refusal is reported as
+`payment denied` and nothing is dispatched.
+
+Result fields:
+
+- `id` — the send record id, used with `sms.status`.
+- `accepted` — `true` when the rail accepted the message for dispatch.
+- `rail` — the rail name that accepted it.
+- `best_effort` — echoed from the rail's own capability flags.
+
+### `sms.status(id)` — free
+
+Returns the stored send record: destination, price paid, rail, acceptance and
+any refund. It never claims delivery on a rail that cannot observe it.
+
+### `sms.pricing` — free
+
+Live per-destination price in sats. Returns `unit: "sats"`, the domestic and
+international prices, and the documented default used for an unknown prefix.
+An unknown prefix is never free.
+
+### `sms.capabilities` — free
+
+The rail name and its capability flags, read from the rail itself:
+
+- `best_effort` — `true` means there is no retry guarantee.
+- `delivery_receipts` — `false` means NO delivery confirmation is possible.
+- `countries` — destinations the rail will attempt.
+
+### `docs` (alias `llms`) — free
+
+Returns the `llms.txt` contract verbatim. Callers must not need out-of-band
+knowledge: everything required to use the service is reachable from the server.
+
+### `llms-full` — free
+
+Returns this manual.
+
+## 4. Payment (CEP-8)
+
+- Gating: `explicit_gating`.
+- Capability tags: `cap:tool:sms.send:100:sats` (domestic),
+  `cap:tool:sms.send:500:sats` (international).
+- PMI: `bitcoin-cashu` (primary). A Lightning PMI may be added later.
+- Refunds: a hard failure the rail can detect is refunded automatically. A
+  `best_effort` miss — the rail accepted and the carrier silently dropped the
+  message — is NOT refundable, because the rail cannot see it.
+- Owner allowlist: the operator's own npub sends free; paying yourself is
+  pointless. Every other caller pays.
+
+## 5. Error contract
+
+ContextVM errors arrive in the envelope `error` field:
+`payment required`, `payment denied`, `policy denied`, `unsupported method`,
+`server not found`, `relay timeout`.
+
+The HTTP surface carries the same vocabulary as headers:
+
+- `X-Reason`: `insufficient_funds`, `bad_destination`, `rail_not_configured`,
+  `transport_error`, `rate_limited`, `owner_only`, `auth_missing`,
+  `auth_invalid`, `auth_expired`, `auth_replayed`, `auth_url_mismatch`,
+  `auth_method_mismatch`, `auth_payload_mismatch`, `invalid_request`,
+  `not_found`, `method_not_allowed`, `internal_error`.
+- `X-Hint`: one human-readable sentence.
+
+## 6. Honest limits (read before building on this)
+
+1. **No delivery receipts.** `sms.send` returning `accepted: true` means the
+   rail took the message. It does not mean the handset received it. Do not
+   build OTP confirmation, escrow release on delivery, or any
+   delivery-dependent logic on this rail.
+2. **Best effort.** No retry guarantee.
+3. **One personal line.** Throughput is that of a single phone number.
+4. **Countries.** The rail reports what it will attempt; it does not guarantee
+   coverage.
+
+## 7. Data handling
+
+Destination numbers and message bodies are retained only for status lookups and
+refunds. No marketing use, no third-party sharing, no analytics. Message bodies
+on the HTTP surface are NIP-44-encrypted client-to-gateway and are never stored
+in plaintext at the service.
+
+## 8. Running the napplet
+
+The napplet requires exactly one shell capability: `cvm`. Everything else —
+theme, storage, notify — is optional and feature-detected. It never holds a key
+and never holds an ecash token: payment runs through the shell's CEP-8 flow.
+
+---
+*Manual version: v1 draft. The authoritative values are always the live
+`sms.pricing` and `sms.capabilities` responses.*
