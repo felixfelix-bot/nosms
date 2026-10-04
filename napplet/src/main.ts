@@ -12,15 +12,13 @@ import {
   type Pricing,
 } from './cvm.js';
 import { InvalidDestination, formatSats, normalizeE164, priceFor, zoneLabel } from './pricing.js';
+import { DEFAULT_SERVER, hasDefaultServer } from './server-config.js';
 import { runtimeHasDomain } from './domain-availability.js';
 import contractText from './contract/llms.txt?raw';
 import contractFullText from './contract/llms-full.txt?raw';
 import './styles.css';
 
 type StatusKind = 'idle' | 'ok' | 'warn' | 'error';
-
-const DEFAULT_SERVER_PUBKEY = '__NOSMS_CVM_PUBKEY__';
-const DEFAULT_SERVER_RELAYS = ['wss://relay.primal.net', 'wss://nos.lol'];
 
 const elements = {
   status: requireElement<HTMLOutputElement>('#status'),
@@ -169,8 +167,8 @@ async function connect(): Promise<void> {
     const found = discovery.servers[0];
     if (found?.pubkey) {
       server = { pubkey: found.pubkey, relays: found.relays ?? [], name: found.name };
-    } else if (DEFAULT_SERVER_PUBKEY && !DEFAULT_SERVER_PUBKEY.startsWith('__')) {
-      server = { pubkey: DEFAULT_SERVER_PUBKEY, relays: DEFAULT_SERVER_RELAYS, name: 'nosms' };
+    } else if (hasDefaultServer()) {
+      server = { pubkey: DEFAULT_SERVER.pubkey, relays: DEFAULT_SERVER.relays, name: 'nosms' };
     } else {
       renderServer();
       setStatus('warn', 'No nosms server found');
@@ -336,8 +334,8 @@ renderCapabilities(null);
 renderServer();
 subscribeToTheme();
 
-if (DEFAULT_SERVER_PUBKEY && !DEFAULT_SERVER_PUBKEY.startsWith('__')) {
-  server = { pubkey: DEFAULT_SERVER_PUBKEY, relays: DEFAULT_SERVER_RELAYS, name: 'nosms' };
+if (hasDefaultServer()) {
+  server = { pubkey: DEFAULT_SERVER.pubkey, relays: DEFAULT_SERVER.relays, name: 'nosms' };
   renderServer();
 }
 

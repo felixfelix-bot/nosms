@@ -1,0 +1,8 @@
+{
+  "_generated_by": "scripts/export_contract.py",
+  "_note": "Default ContextVM server used when discovery finds nothing.",
+  "pubkey": "npub1al953lfy7nv5qjwhcw8u2p0uuq0dwmjes3g4rgjxqlke75nxsd9q6lw3w9",
+  "relays": [
+    "wss://relay.primal.net"
+  ]
+}
