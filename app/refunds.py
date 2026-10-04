@@ -33,8 +33,14 @@ def resolve(value):
 
 
 def receipts_observable(transport) -> bool:
+    """A rail can only be trusted to report non-delivery if it is *usable*.
+
+    An unavailable rail (no credential, unreachable provider) answers "unknown"
+    to every status poll. Treating that as evidence of non-delivery would refund
+    messages that were in fact delivered — the opposite of the honesty rule.
+    """
     caps = getattr(transport, "capabilities", None)
-    return bool(getattr(caps, "delivery_receipts", False))
+    return bool(getattr(caps, "delivery_receipts", False)) and bool(getattr(caps, "available", False))
 
 
 def held_token(record: EscrowRecord, *, include_change: bool = True) -> dict:

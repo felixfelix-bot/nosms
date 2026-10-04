@@ -87,9 +87,12 @@ class TelnyxTransport:
 
     @property
     def capabilities(self) -> Capabilities:
-        return Capabilities(available=bool(self._configured and self._provider is not None),
-                            best_effort=False, delivery_receipts=True,
-                            countries=["*"])
+        # An unconfigured adapter cannot observe anything: reporting
+        # delivery_receipts=True without a credential would let the refund sweep
+        # read "no status" as "not delivered" and pay out on silence.
+        usable = bool(self._configured and self._provider is not None)
+        return Capabilities(available=usable, best_effort=False,
+                            delivery_receipts=usable, countries=["*"])
 
     async def send(self, dest: str, body: str, **kwargs) -> SendResult:
         if not self._configured or self._provider is None:

@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the nosms auto-refund sweep every 5 minutes
+
+[Timer]
+# Every 5 min, so a message is refunded within ~5 min of the T+15 watermark.
+# The sweep itself is idempotent, which is what makes a frequent cadence safe.
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Unit=nosms-refund-sweep.service
+
+[Install]
+WantedBy=timers.target
