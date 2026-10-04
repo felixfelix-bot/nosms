@@ -43,10 +43,12 @@ pay sats per message, postage-style. No account, no API key, no KYC.
 
 ## Endpoints
 
-- `GET  /api/health`   -> JSON {{service, version, commit, transport, ok}}. Open, cheap, no outbound calls.
-- `POST /api/send`     -> send one SMS. Requires NIP-98 auth. Body: {{"to": "<E.164>", "body": "..."}}.
+- `GET  /api/health`   -> JSON {{service, version, commit, transport, mint, ok}}. Open, cheap, no outbound calls.
+- `POST /api/send`     -> send one SMS. Requires NIP-98 auth and a Cashu postage token. Body: {{"to": "<E.164>", "text": "..."}}.
+- `GET  /api/message/<message_id>/status` -> queued / sent / delivered / failed, plus the rail's own raw status string. Requires NIP-98 auth as the paying key.
+- `GET  /api/refund/<message_id>`         -> the refund token for an undelivered message. Requires NIP-98 auth as the paying key.
 - `GET  /llms.txt`     -> this document.
-- `GET  /llms-full.txt`-> 501 stub in M1a (full manual ships later).
+- `GET  /llms-full.txt`-> 501 stub (full manual ships later).
 
 ## Authentication — NIP-98 (kind 27235)
 
@@ -76,6 +78,62 @@ The same event as JSON:
 
     {json.dumps(EXAMPLE_EVENT, separators=(",", ":"))}
 
+## Sending — `POST /api/send`
+
+Body (JSON):
+
+    {{"to": "+4915112345678", "text": "hello"}}
+
+`to` MUST be an E.164 destination (`+` and digits). `text` is the message; the
+alias `body` is accepted for compatibility. The postage token travels in a
+header, not in the body — it is never logged with the message:
+
+    X-Cashu: cashuAeyJ0b2tlbiI6W3sibWludCI6...     (v3, base64url JSON)
+    X-Cashu: cashuBo2F0gaJhaVghAYQjfmPONCPffb...   (v4, base64url CBOR)
+
+Both token encodings are accepted. The token's mint MUST be
+`{getattr(cfg, "mint_url", "https://testnut.cashu.space")}` — postage is escrowed there and nowhere else.
+
+What happens, in order:
+
+1. The destination is priced from the prefix table below.
+2. Every proof in the token is checked against the mint (NUT-07); a spent proof
+   is `409 token_already_spent`.
+3. The mint's own input fee (0.1 sat per proof on testnut) is deducted from the
+   amount the token carries; that fee is yours, postage is ours. If what is left
+   is below the price the request is refused with `402 insufficient_funds` and
+   `X-Hint` names the shortfall in sats.
+4. The proofs are **swapped at the mint** for fresh ones this service holds —
+   that is the escrow. Your original token can no longer be spent, which is the
+   only sense in which holding a token is escrow at all.
+5. The message goes to the rail. On success you get `200` with:
+
+       {{"message_id": "m_…", "price_sats": 500, "change_sats": 28,
+         "status": "queued", "status_url": "/api/message/m_…/status",
+         "refund_url": "/api/refund/m_…", "escrow": {{"mint": "…", "amount_sats": 500}}}}
+
+**`queued` is not `delivered`.** Poll `status_url`; the reply carries both the
+normalised `status` (queued / sent / delivered / failed) and `provider_status`,
+the rail's own unmodified string. This service never upgrades a status the rail
+did not report: if the rail has no delivery receipts, the status never says
+"delivered".
+
+### Refunds
+
+If a message is still not delivered at T+{getattr(cfg, "refund_after_seconds", 900) // 60} minutes, the postage *and* the
+unspent change go back to the paying key: `GET status_url` then shows
+`"refunded": true` with a `refund` block, and `GET /api/refund/<message_id>`
+returns the bearer token for that amount. Refunds are claimed atomically, so a
+sweep that runs twice cannot pay out twice. A rail that cannot observe delivery
+is never auto-refunded — silence is not proof of non-delivery.
+
+### Limits
+
+Config-driven, per key:
+
+- per-destination cooldown: {getattr(cfg, "destination_cooldown_seconds", 60)} s → `429 destination_cooldown`
+- daily cap: {getattr(cfg, "daily_cap", 100)} messages / rolling 24 h → `429 daily_cap_reached`
+
 ## Pricing (sats, per message)
 
 Prices are charged in satoshis. The unit is sats — there is no fiat billing.
@@ -95,9 +153,13 @@ Every 4xx/5xx response carries two headers:
 
 Tokens you can rely on: `auth_missing`, `auth_invalid`, `auth_expired`,
 `auth_replayed`, `auth_url_mismatch`, `auth_method_mismatch`,
-`auth_payload_mismatch`, `bad_destination`, `invalid_request`, `not_found`,
-`method_not_allowed`, `send_not_implemented`, `transport_error`,
-`insufficient_funds`, `internal_error`.
+`auth_payload_mismatch`, `bad_destination`, `empty_body`, `body_too_long`,
+`token_missing`, `token_invalid`, `token_unsupported`, `token_empty`,
+`token_wrong_mint`, `token_already_spent`, `token_state_unknown`,
+`insufficient_funds`, `destination_cooldown`, `daily_cap_reached`,
+`mint_error`, `mint_unreachable`, `transport_error`, `not_refunded`,
+`invalid_request`, `not_found`, `method_not_allowed`, `send_not_implemented`,
+`internal_error`.
 
 A bare `401` is never returned; always read `X-Reason`.
 
