@@ -50,9 +50,14 @@ any refund. It never claims delivery on a rail that cannot observe it.
 
 ### `sms.pricing` — free
 
-Live per-destination price in sats. Returns `unit: "sats"`, the domestic and
-international prices, and the documented default used for an unknown prefix.
-An unknown prefix is never free.
+The live flat price in sats. Returns `unit: "sats"`, `model: "flat"`, the price,
+and the ADR-0002 formula inputs (`risk_multiplier`, `rail_replacement_usd`).
+
+The price does not depend on the destination: the v1 rail's plan is unlimited
+including international, so a per-country price would advertise a distinction the
+rail does not have. A destination is still validated (a string with no digits is
+`bad_destination`), and the price is never zero — an unrecognised destination
+takes the documented default rather than becoming free.
 
 ### `sms.capabilities` — free
 
@@ -74,8 +79,10 @@ Returns this manual.
 ## 4. Payment (CEP-8)
 
 - Gating: `explicit_gating`.
-- Capability tags: `cap:tool:sms.send:100:sats` (domestic),
-  `cap:tool:sms.send:500:sats` (international).
+- Capability tags: `cap:tool:sms.send:2900:sats` — one flat price, one tool.
+  ADR-0002 supersedes the earlier per-destination caps; the free tools
+  (`sms.status`, `sms.pricing`, `sms.capabilities`, `docs`) carry no `cap`,
+  because a price on a free call would claim money is required for it.
 - PMI: `bitcoin-cashu` (primary). A Lightning PMI may be added later.
 - Refunds: a hard failure the rail can detect is refunded automatically. A
   `best_effort` miss — the rail accepted and the carrier silently dropped the

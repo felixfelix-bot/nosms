@@ -119,12 +119,12 @@ function renderPrice(): void {
     return;
   }
 
-  // The live table wins when the server advertised one. Domestic / international
-  // are the server's own labels; the prefix match only picks which one applies.
+  // The live price wins when the server advertised one. ADR-0002: the price is
+  // flat, so there is no domestic/international branch any more — the server's
+  // own `sms.pricing` value is the price for every destination.
   let live: number | null = null;
   if (livePricing) {
-    if (zone === 'US/CA') live = livePricing.domestic ?? null;
-    else live = livePricing.international ?? livePricing.default ?? null;
+    live = livePricing.price ?? livePricing.default ?? null;
   }
 
   const sats = live ?? bundled;

@@ -14,7 +14,7 @@ Source of truth: <https://cashu.email/llms.txt> (cached: `~/reports/cashu-sms/ll
 |---|---|
 | `npub1…@nomail.name` free address | nostr key = sender identity; recipient = phone number |
 | Receiving free | inbound: pooled number + routing alias → delivered to the owner's npub |
-| Sending 100 sats (Cashu token or LN) | 100 sats/SMS domestic-parity, 500 sats international |
+| Sending 2900 sats (Cashu token or LN) | 2900 sats/SMS FLAT, domestic and international alike (ADR-0002) |
 | Custom aliases 1k–1M sats | short/vanity numbers, or `+NNN… @alias` routing handles |
 | NIP-01 signed-event auth → `__Host-session` cookie | **NIP-98 (kind 27235) per-request auth** — CORS-safe, so a browser tab can call it (nomail's cookie cannot) |
 | `/api/send`, `/api/messages`, `/api/addresses`, `/api/proofs`, `/api/pricing` | same shape: `/api/send`, `/api/message/:id/status`, `/api/balance`, `/api/topup`, `/api/pricing` |
@@ -192,7 +192,8 @@ access; the CVM surface is for in-shell clients. Both sit on the same `Transport
 - **Tools:** `sms.send` (paid), `sms.status` (free), `sms.pricing` + `sms.capabilities`
   (free). `sms.capabilities` reports `best_effort` and `delivery_receipts` **from the
   rail itself**, never hardcoded.
-- **Payment (CEP-8):** `cap:tool:sms.send:<sats>:sats` — 100 domestic / 500 international,
+- **Payment (CEP-8):** `cap:tool:sms.send:<sats>:sats` — flat 2900 sats (ADR-0002 supersedes
+  the 100 domestic / 500 international split),
   nosms parity. `pmi: bitcoin-cashu` first (Cashu-native, refund is a token, no LN node
   needed); `bitcoin-lightning-bolt11` + NWC as a second PMI later. Lifecycle
   `explicit_gating`: **nothing is sent before payment lands**, and a hard, detectable
