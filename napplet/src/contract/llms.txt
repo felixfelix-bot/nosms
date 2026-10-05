@@ -18,18 +18,49 @@ prices — **always read those two before sending; never hardcode what is below.
 
 ## Tools
 
-- `sms.send(to, body)` — PAID. `to` is E.164 (`+18102944652`).
+- `sms.send(to, body)` — PAID. `to` is E.164 (`+14155550100`).
 - `sms.status(id)` — free. Returns the send record.
-- `sms.pricing` — free. Live per-destination price in sats.
+- `sms.pricing` — free. Live flat price in sats (no per-destination table).
 - `sms.capabilities` — free. Rail name + capability flags.
 - `docs` (alias `llms`) — free. This contract.
 
 ## Pricing (sats)
 
-- domestic (US, CA): 100
-- international: 500
+**One flat price, domestic and international alike: 2,900 sats per message.**
 
-Authoritative values come from `sms.pricing`; the numbers above are defaults.
+The v1 rail is a single personal JMP/Cheogram line whose plan is unlimited
+including international, so the destination does not change the cost and a
+per-country price would advertise a distinction the rail does not have. The price
+is a risk premium for running this service over that line (ADR-0002), derived as
+`ceil(MULT * rail_replacement_usd * sats_per_usd)`.
+
+Authoritative value comes from `sms.pricing`; the number above is the default.
+
+## Discovery — the CEP-6 tags a client sees
+
+Kind `11316` (server announcement) and `11317` (tools), both replaceable and both
+carrying the same discoverable tag surface:
+
+```
+["d","nosms"]                             stable instance id (P1)
+["t","cvm:service:sms"]                   namespaced service class (P2 MUST)
+["t","sms"] ["t","contextvm"]             plain human words (P2 SHOULD)
+["t","cvm:req:payment.amount"]            declared flow input: money, nothing else (P15)
+["t","cvm:req:none"]                      P15 sentinel: no personal data is required
+["t","cvm:tier:financial"]                the recomputed max tier (P15 / D14)
+["cap","tool:sms.send","2900","sats"]     CEP-8 price for the one paid tool
+["r","https://nosms.orangesync.tech/llms.txt"]   docs link (P2 SHOULD)
+["pmi","bitcoin-cashu","explicit_gating"]        CEP-8 payment method + gating
+["name","nosms"] ["about",…] ["website",…]       payload only, not filterable (D2)
+```
+
+- **Only `d`, `r` and `t` are filterable.** `cap`, `pmi`, `name` and `about` are
+  payload — relays do not index them (D2).
+- **No geohash:** this service has no fixed location, and the spec forbids a
+  meaningless `["g",…]` (P2).
+- The declared appetite is money only; `to`/`body` are tool arguments, not flow
+  fields, so the recomputed tier is `financial` and the `cvm:req:none` sentinel
+  rides along.
 
 ## Capabilities — read these, do not assume
 
@@ -48,7 +79,8 @@ delivery) on this rail.
 ## Payment (CEP-8)
 
 - Gating: `explicit_gating` — nothing is sent before payment lands.
-- `cap:tool:sms.send:100:sats` (domestic) / `:500:sats` (international).
+- `cap:tool:sms.send:2900:sats` — one price, one tool. The free tools carry no
+  `cap`: a price on a free call would claim money is required for it.
 - PMI: `bitcoin-cashu` (primary).
 - Hard failures the rail can detect are auto-refunded; a `best_effort` miss is not.
 

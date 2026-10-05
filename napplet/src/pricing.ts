@@ -1,30 +1,36 @@
 /**
  * Destination pricing.
  *
- * The price table is generated from the Python service's own table
+ * ADR-0002: ONE flat, risk-premium price per SMS. The v1 rail is a single
+ * JMP/Cheogram line whose plan is unlimited including international, so the
+ * destination no longer maps to cost and there is no per-prefix table — the
+ * previous "domestic 100 / international 500" labels advertise a distinction
+ * the rail does not have.
+ *
+ * The number is generated from the Python service's own source of truth
  * (`app/pricing.py` -> `scripts/export_contract.py` -> `./contract/pricing.json`),
- * but the LIVE price is always read from the server via `sms.pricing`. This
+ * and the LIVE price is always read from the server via `sms.pricing`. This
  * module exists so the UI can show a price before a send and so the displayed
- * number is at least the same table the service meters with — never a
- * hardcoded literal.
+ * number is the same number the service meters with — never a hardcoded literal.
  */
 import table from './contract/pricing.json';
 
 export type PricingTable = {
   unit: string;
-  prefixes: Record<string, number>;
+  model: string;
   default: number;
   min_e164_len: number;
+  formula: string;
+  risk_multiplier: number;
+  rail_replacement_usd: number;
 };
 
 export const PRICING: PricingTable = table as PricingTable;
 
-/** Human label for the prefix that matched, e.g. "US/CA" or "international". */
-const DOMESTIC_LABEL = 'US/CA';
-
 export class InvalidDestination extends Error {
   readonly reason = 'bad_destination';
-  constructor(message = 'Destination must be an E.164 phone number, e.g. +141****0100.') {
+  // An EXAMPLE, not a number: the 555-01xx range is reserved for fictional use.
+  constructor(message = 'Destination must be an E.164 phone number, e.g. +1 415 555 0100.') {
     super(message);
     this.name = 'InvalidDestination';
   }
@@ -37,32 +43,22 @@ export function normalizeE164(dest: string): string {
   return `+${digits}`;
 }
 
-/** Sat price for one SMS to `dest`. Never returns 0 (unknown is never free). */
+/**
+ * Sat price for one SMS. ADR-0002: flat — the destination does NOT change the
+ * price, but it is still validated (a string with no digits is a caller bug).
+ * Never returns 0 (unknown is never free).
+ */
 export function priceFor(dest: string): number {
-  const number = normalizeE164(dest);
-  if (number.length < PRICING.min_e164_len) return PRICING.default;
-  for (const prefix of Object.keys(PRICING.prefixes)) {
-    if (number.startsWith(prefix)) return PRICING.prefixes[prefix];
-  }
+  normalizeE164(dest);
   return PRICING.default;
 }
 
-/** True when the matched prefix is the domestic (US/CA) one. */
-export function isDomestic(dest: string): boolean {
-  try {
-    const number = normalizeE164(dest);
-    if (number.length < PRICING.min_e164_len) return false;
-    return number.startsWith('+1');
-  } catch {
-    return false;
-  }
+/** The rail's plan is unlimited including international, so there is one zone. */
+export function zoneLabel(_dest: string): string {
+  return 'flat (worldwide)';
 }
 
-export function zoneLabel(dest: string): string {
-  return isDomestic(dest) ? DOMESTIC_LABEL : 'international';
-}
-
-/** Render a sat amount as "100 sats". */
+/** Render a sat amount as "2900 sats". */
 export function formatSats(sats: number): string {
   return `${sats} sats`;
 }

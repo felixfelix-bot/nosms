@@ -1,0 +1,65 @@
+{
+  "kind": 11316,
+  "id": "6b3e96f495a4dab276c3971d6c8b63ec8679b5e3206433f07a92310fee3a2900",
+  "pubkey": "efcb48fd24f4d94049d7c38fc505fce01ed76e59845151a24607ed9f5266834a",
+  "created_at": 1791214505,
+  "tags": [
+    [
+      "d",
+      "nosms"
+    ],
+    [
+      "t",
+      "cvm:service:sms"
+    ],
+    [
+      "t",
+      "sms"
+    ],
+    [
+      "t",
+      "contextvm"
+    ],
+    [
+      "t",
+      "cvm:req:payment.amount"
+    ],
+    [
+      "t",
+      "cvm:req:none"
+    ],
+    [
+      "t",
+      "cvm:tier:financial"
+    ],
+    [
+      "cap",
+      "tool:sms.send",
+      "2900",
+      "sats"
+    ],
+    [
+      "r",
+      "https://nosms.orangesync.tech/llms.txt"
+    ],
+    [
+      "pmi",
+      "bitcoin-cashu",
+      "explicit_gating"
+    ],
+    [
+      "name",
+      "nosms"
+    ],
+    [
+      "about",
+      "Send SMS on behalf of others over ContextVM. Agent-first: pay per send in Cashu. No account, no API key, no signup."
+    ],
+    [
+      "website",
+      "https://nosms.orangesync.tech/llms.txt"
+    ]
+  ],
+  "captured_from": "wss://relay.primal.net",
+  "captured_at": "2026-10-05T17:35Z"
+}

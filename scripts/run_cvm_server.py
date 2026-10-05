@@ -5,6 +5,14 @@ announcements and the dispatch into :class:`app.cvm_tools.CvmTools`. The tool
 logic (pricing, pricing table, payment gating, refunds, docs) is pure and lives
 in the module under test.
 
+The **tag surface** of the CEP-6 announcement is NOT built here. It is emitted by
+:mod:`app.announce`, which is a port of the shared ``cvm-service-kit`` emitter and
+is diffed against the kit's own golden fixture in
+``tests/test_announce_parity.py``. This module only says *what the server is*
+(name/about/website, the tool list) and hands that to the emitter — hand-rolling
+tags here is what produced the non-conformant announcement this file used to
+publish.
+
 Usage
 -----
     CVM_NSEC=<nsec> python3 scripts/run_cvm_server.py --relays wss://relay.primal.net
@@ -41,7 +49,9 @@ import time
 REPO = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
+from app.announce import AnnounceInput, ToolCap, emit_announcement_tags, load_vocab  # noqa: E402
 from app.cvm_tools import CvmTools                      # noqa: E402
+from app.pricing import DEFAULT_PRICE_SATS             # noqa: E402
 from app.transports import EmailGatewayTransport, FakeTransport  # noqa: E402
 
 CONTRACT_DIR = REPO / "napplet" / "src" / "contract"
@@ -56,6 +66,21 @@ SERVER_INFO = {
              "send in Cashu. No account, no API key, no signup.",
     "version": "0.1.0",
 }
+
+#: The service class — the namespaced `["t","cvm:service:<class>"]` value (P2).
+#: nosms is a single tool family: you send one SMS. `contextvm` is NOT a class
+#: (it is a transport word) and the old announcement publishing it was wrong (D3).
+SERVICE_CLASS = "sms"
+
+#: The stable per-instance slug (P1).
+SERVICE_SLUG = "nosms"
+
+#: Human `t` words (SHOULD, P2) — plain, never namespaced.
+HUMAN_TAGS = ["sms", "contextvm"]
+
+#: The one tool that costs money. Everything else on this server is free, and a
+#: `cap` tag on a free tool would claim otherwise (see paid_tool_caps).
+PAID_TOOL = "sms.send"
 
 
 def load_docs() -> dict[str, str]:
@@ -72,6 +97,73 @@ def build_transport(name: str):
         return FakeTransport()
     raise SystemExit(f"unknown transport {name!r} (v1 wires email|fake; JMP is the "
                      "operator's own rail and is not wired as service infrastructure)")
+
+
+def paid_tool_caps(tool_names: list[str]) -> dict[str, ToolCap]:
+    """`cap` entries for the tools that actually COST something (CEP-8 / ADR-0001 D5).
+
+    Only ``sms.send`` is paid. A free tool (`sms.status`, `sms.pricing`,
+    `sms.capabilities`, `docs`) MUST NOT advertise a price: a `cap` on a free tool
+    claims money is required for a call that is free (P4: "MUST NOT advertise a
+    price it cannot honour"), and it is a worse lie than the three-duplicate-cap
+    defect this card fixes. A tool with no `cap` is free, which is the default.
+    """
+    return {name: ToolCap(amount=DEFAULT_PRICE_SATS) for name in tool_names if name == PAID_TOOL}
+
+
+def announcement_input(contract_url: str, paid_tools: dict[str, ToolCap]) -> AnnounceInput:
+    """Describe the nosms service as the CONTRACT sees it. No tags are built here.
+
+    Declared flow inputs: ``payment.amount`` and nothing else. The destination
+    and the body are MCP tool arguments, not flow fields a user is asked for, so
+    they are NOT declared — declaring them would be the inflated appetite
+    ADR-0001 D14 / P15 minimisation forbids. The recomputed tier is therefore
+    ``financial`` (rank 1) and the emitter publishes the ``cvm:req:none``
+    sentinel with it (docs/spec/service-inputs.md, "When is the sentinel
+    published?").
+
+    No geohashes: nosms has no fixed location, and P2 forbids publishing a
+    meaningless one.
+    """
+    return AnnounceInput(
+        service_class=SERVICE_CLASS,
+        d=SERVICE_SLUG,
+        geohashes=[],
+        required=["payment.amount"],
+        optional=[],
+        tools=paid_tools,
+        registries=[],
+        urls=[contract_url],
+        human_tags=list(HUMAN_TAGS),
+    )
+
+
+def payload_tags(contract_url: str) -> list[list[str]]:
+    """Multi-letter payload tags (D2). Not filterable; a reader renders them."""
+    return [
+        ["name", SERVER_INFO["name"]],
+        ["about", SERVER_INFO["about"]],
+        ["website", contract_url],
+    ]
+
+
+def announcement_tags(contract_url: str, tool_names: list[str],
+                      vocab: dict) -> tuple[list[list[str]], str]:
+    """The full wire tag set: kit contract surface + payment + payload.
+
+    Returns ``(tags, tier)``. Raises if the kit emitter produced anything
+    non-conforming — the emitter self-checks, so that is a port bug, not a
+    server-input error.
+    """
+    inp = announcement_input(contract_url, paid_tool_caps(tool_names))
+    contract_tags, _warnings, tier = emit_announcement_tags(inp, vocab)
+    tags = contract_tags + [
+        # CEP-8 declaration. The kit at the vendored commit has no payment
+        # support (see contextvm-services docs/plans/S5a-*): declare it here, in
+        # one place, and keep the gap tracked.
+        ["pmi", "bitcoin-cashu", "explicit_gating"],
+    ] + payload_tags(contract_url)
+    return tags, tier
 
 
 def tag_values(tag) -> list[str]:
@@ -94,7 +186,17 @@ async def main() -> int:
     ap.add_argument("--announce", action="store_true",
                     help="publish the CEP-6 catalog and exit")
     ap.add_argument("--contract-url", default="https://nosms.orangesync.tech/llms.txt")
+    ap.add_argument("--show-tags", action="store_true",
+                    help="print the tag set the emitter will publish, then exit")
     args = ap.parse_args()
+
+    if args.show_tags:
+        # offline: prove the contract surface without touching a relay
+        from app.cvm_tools import CvmTools as _T
+        names = [t["name"] for t in _T(FakeTransport(), docs={}).tool_definitions()]
+        tags, tier = announcement_tags(args.contract_url, names, load_vocab())
+        print(json.dumps({"tier": tier, "tags": tags}, indent=2))
+        return 0
 
     from nostr_sdk import (Client, ClientBuilder, EventBuilder, Filter, HandleNotification,
                            Keys, Kind, NostrSigner, RelayUrl, Tag)
@@ -132,27 +234,30 @@ async def main() -> int:
     print(f"[nosms-cvm] relays      {', '.join(args.relays)}")
 
     async def announce() -> None:
-        """Publish the CEP-6 service catalog (replaceable kinds)."""
+        """Publish the CEP-6 service catalog (replaceable kinds).
+
+        The `11316` tag surface comes ENTIRELY from :mod:`app.announce` (the kit
+        port). Only the content differs per kind; both kinds carry the same
+        discoverable surface, so `cvmi discover` and the registry see one service.
+        """
         contract = {
             "contract_url": args.contract_url,
             "docs_tool": "docs",
             "tools": [t["name"] for t in tools.tool_definitions()],
             "capabilities": tools.sms_capabilities(),
         }
+        vocab = load_vocab()
+        tags, tier = announcement_tags(
+            args.contract_url, [t["name"] for t in tools.tool_definitions()], vocab)
+        print(f"[nosms-cvm] emit tier={tier} tags={json.dumps(tags)}")
         tag_sets = [
             (ANNOUNCE_SERVER, json.dumps(SERVER_INFO)),
             (ANNOUNCE_TOOLS, json.dumps({
                 "tools": tools.tool_definitions(), **contract})),
         ]
         for kind, content in tag_sets:
-            builder = EventBuilder(Kind(kind), content).tags([
-                Tag.parse(["d", "nosms"]),
-                Tag.parse(["name", SERVER_INFO["name"]]),
-                Tag.parse(["t", "sms"]),
-                Tag.parse(["t", "contextvm"]),
-                Tag.parse(["contract", args.contract_url]),
-                *[Tag.parse(t) for t in tools.capability_tags()],
-            ])
+            builder = EventBuilder(Kind(kind), content).tags(
+                [Tag.parse(t) for t in tags])
             out = await client.send_event_builder(builder)
             print(f"[nosms-cvm] announcement kind {kind}: {out}")
 

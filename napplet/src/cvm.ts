@@ -20,8 +20,9 @@ export type Capabilities = {
 
 export type Pricing = {
   unit?: string;
-  domestic?: number;
-  international?: number;
+  /** ADR-0002: flat — `price` is the price for every destination. */
+  model?: string;
+  price?: number;
   default?: number;
   [key: string]: unknown;
 };

@@ -1,0 +1,92 @@
+{
+  "_comment": "Machine-readable copy of docs/spec/service-inputs.md. The kit and the registry read THIS file; they must stay in step with the prose. Additive only: never rename, never repurpose, never recycle a retired name. A group name alone (e.g. ship.address) is legal shorthand; a group with sub-fields also publishes the sub-fields it uses.",
+  "version": 1,
+  "updated": "2026-10-04",
+  "status": "v1 draft, additive",
+  "tag_contract": {
+    "required": "t=cvm:req:<field>",
+    "optional": "t=cvm:opt:<field>",
+    "none_sentinel": "t=cvm:req:none",
+    "letters": "carried on the existing single-letter t tag (ADR-0001 D2/D3); additions are new VALUES, never new letters",
+    "and_problem": "several #t values in one REQ are OR, never AND. The relay filter is a coarse prefilter; the AND is done locally on the cache (ADR-0001 D6)."
+  },
+  "tiers": {
+    "none": "nothing user-supplied (the cvm:req:none sentinel)",
+    "financial": "settlement only, no identity",
+    "contact": "identifies or reaches the human",
+    "fulfilment": "needed to deliver or to run the session",
+    "legal": "required by law or by the venue's terms",
+    "sensitive": "special-category or health-adjacent"
+  },
+  "tier_tag": {
+    "tag": "t=cvm:tier:<tier>",
+    "rule": "exactly ONE tier tag per announcement = the MAXIMUM tier among the declared cvm:req:*/cvm:opt:* fields",
+    "ranks": {"none": 0, "financial": 1, "contact": 2, "fulfilment": 3, "legal": 4, "sensitive": 5},
+    "why_max_only": "several #t values in one REQ are OR, so 'at most contact' = #t:[cvm:tier:none,cvm:tier:financial,cvm:tier:contact]. Publishing every tier present would make 'has no sensitive field' an absence test, which no relay filter can express.",
+    "conservative": "a service is never matched by a filter looser than its worst field",
+    "truth": "the field list is the truth; the tier tag MUST equal the recomputed max of the declared fields, and a reader finding a disagreement MUST use the recomputed value AND surface the mismatch",
+    "ladder_note": "a disclosure ordering, not a juridical claim - rank 3 is not 'worse' than rank 2, it is higher in the upper-bound sense the filter needs"
+  },
+  "filter_shorthand": {
+    "cvm:req:none": "tiers none + financial only",
+    "no_personal_data": ["none", "financial"],
+    "contact_only": ["none", "financial", "contact"]
+  },
+  "fields": {
+    "order.items":       {"tier": "fulfilment", "type": "array",  "note": "basket (line items + quantities); usually a tool argument, still declared"},
+    "order.notes":       {"tier": "fulfilment", "type": "string"},
+    "order.fulfilment":  {"tier": "fulfilment", "type": "enum",   "values": ["pickup", "delivery", "dine_in"]},
+    "order.when":        {"tier": "fulfilment", "type": "string", "note": "ISO 8601 or 'asap'"},
+    "order.channel":     {"tier": "fulfilment", "type": "string", "note": "the venue's own rail used for v1 deep-link"},
+
+    "ship.address":              {"tier": "fulfilment", "type": "group"},
+    "ship.address.street":       {"tier": "fulfilment", "type": "string"},
+    "ship.address.city":         {"tier": "fulfilment", "type": "string"},
+    "ship.address.postal_code":  {"tier": "fulfilment", "type": "string"},
+    "ship.address.country":      {"tier": "fulfilment", "type": "string", "note": "ISO 3166-1 alpha-2"},
+    "ship.recipient_name":       {"tier": "contact",    "type": "string"},
+    "ship.notes":                {"tier": "fulfilment", "type": "string"},
+
+    "contact.name":      {"tier": "contact", "type": "string"},
+    "contact.phone":     {"tier": "contact", "type": "string"},
+    "contact.email":     {"tier": "contact", "type": "string"},
+    "contact.messenger": {"tier": "contact", "type": "string"},
+
+    "book.when":      {"tier": "fulfilment", "type": "string"},
+    "book.party_size": {"tier": "fulfilment", "type": "integer"},
+    "book.duration":  {"tier": "fulfilment", "type": "integer", "unit": "minutes"},
+    "session.start":  {"tier": "fulfilment", "type": "string"},
+    "session.duration": {"tier": "fulfilment", "type": "integer"},
+    "session.meter":  {"tier": "fulfilment", "type": "number",  "note": "e.g. kWh budget for a charge session"},
+    "asset.id":       {"tier": "fulfilment", "type": "string",  "note": "charger / table / locker the user asks about"},
+    "ev.connector":   {"tier": "fulfilment", "type": "enum",    "values": ["type2", "ccs", "nacs"]},
+    "ev.plate":       {"tier": "fulfilment", "type": "string"},
+
+    "identity.dob":       {"tier": "sensitive", "type": "string", "note": "age gate; prefer identity.age_over"},
+    "identity.age_over":  {"tier": "sensitive", "type": "integer", "note": "bare assertion, preferred over a date of birth"},
+    "identity.gov_id":    {"tier": "sensitive", "type": "string", "note": "avoid; MUST be visible in the announcement and badged in the dashboard"},
+    "auth.membership_set": {"tier": "sensitive", "type": "reference", "note": "value is the set's 'a' reference, not a boolean; customer-side ring case, mirror of P12"},
+
+    "legal.terms":           {"tier": "legal", "type": "ack"},
+    "legal.invoice_address": {"tier": "legal", "type": "group"},
+    "legal.tax_id":          {"tier": "legal", "type": "string"},
+
+    "prefs.dietary":   {"tier": "sensitive", "type": "string"},
+    "prefs.allergens": {"tier": "sensitive", "type": "array"},
+    "prefs.spice":     {"tier": "sensitive", "type": "enum"},
+    "prefs.language":  {"tier": "fulfilment", "type": "string"},
+
+    "voucher.code": {"tier": "financial", "type": "string"},
+
+    "payment.amount": {"tier": "financial", "type": "number", "note": "unit MUST be declared (sats or fiat)"},
+    "payment.method": {"tier": "financial", "type": "enum",   "values": ["bitcoin-lightning-bolt11", "bitcoin-cashu", "venue-card", "cash-on-delivery"], "note": "v1: the venue's own rail settles (ADR-0001 D5)"}
+  },
+  "rules": [
+    "declare what the FLOW collects, not just what the CVM's own tool signature needs",
+    "minimisation: MUST NOT require a field it does not use",
+    "unknown fields fail loud: surface as unknown requirement, never count as cvm:req:none",
+    "absent is not none: no cvm:req:* tag at all = unknown appetite, grouped as unclassified",
+    "tags carry the filterable names; the announcement content carries types, patterns and explanations"
+  ],
+  "deprecated": {}
+}

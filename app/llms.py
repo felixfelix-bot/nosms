@@ -32,6 +32,21 @@ def example_header() -> str:
 
 def llms_txt(cfg) -> str:
     header = example_header()
+    # The price is rendered from the SAME module `sms.pricing` and the CEP-8
+    # `cap` tag read, so the contract's printed default cannot drift from what
+    # the service meters with (ADR-0002 / CEP draft 0001 P4).
+    from .pricing import (
+        DEFAULT_PRICE_SATS,
+        PRICE_ROUNDING_SATS,
+        RAIL_REPLACEMENT_USD,
+        RISK_MULTIPLIER,
+    )
+
+    PRICE = DEFAULT_PRICE_SATS
+    ROUNDING = PRICE_ROUNDING_SATS
+    MULT = RISK_MULTIPLIER
+    RAIL_USD = RAIL_REPLACEMENT_USD
+    SATS_PER_USD = round(100_000_000 / 86462, 2)  # at the recorded BTCUSD quote
     return f"""# nosms — SMS for nostr keys (cashu.email parity)
 
 Service: {cfg.service}
@@ -80,11 +95,57 @@ The same event as JSON:
 
 Prices are charged in satoshis. The unit is sats — there is no fiat billing.
 
-- `+1` (US/CA): 100 sats
-- `+49`, `+44`, `+351`, `+91`: 500 sats
-- any other prefix: 500 sats (documented default; unknown is never free)
+**One flat price, domestic and international alike: {PRICE} sats per message.**
+The v1 rail is a single personal JMP/Cheogram line whose plan is unlimited
+including international, so the destination does not change the cost and a
+per-country price would advertise a distinction the rail does not have
+(ADR-0002).
 
-`GET /api/health` is free. `POST /api/send` costs the price above, per message.
+The price is derived, not a magic number:
+
+    price_sats = ceil(MULT * rail_replacement_usd * sats_per_usd), rounded up to {ROUNDING}
+    = ceil({MULT} * {RAIL_USD} * {SATS_PER_USD}) = {PRICE} sats
+
+`MULT` is the operator's abuse premium and walks down as the abuse record stays
+clean; `rail_replacement_usd` is the monthly cost of replacing the rail. Treat
+the number here as a default and read the live one from the server.
+
+`GET /api/health` and `GET /llms.txt` are free. `POST /api/send` costs the price
+above, per message, and never sends before payment lands.
+
+## Discovery — the CEP-6 tags a client sees
+
+The service announces itself as a ContextVM (CEP-6) catalog: kind `11316`
+(server announcement) and `11317` (tools), both replaceable and both carrying the
+same discoverable tag surface. These are the tags a client — and the registry
+dashboard — actually reads:
+
+    ["d","nosms"]                             stable instance id (P1)
+    ["t","cvm:service:sms"]                   namespaced service class (P2 MUST)
+    ["t","sms"] ["t","contextvm"]             plain human words (P2 SHOULD)
+    ["t","cvm:req:payment.amount"]            declared flow input: money, nothing else (P15)
+    ["t","cvm:req:none"]                      P15 sentinel: no personal data is required
+    ["t","cvm:tier:financial"]                the recomputed max tier (P15 / D14)
+    ["cap","tool:sms.send","{PRICE}","sats"]  CEP-8 price for the one paid tool
+    ["r","https://nosms.orangesync.tech/llms.txt"]   docs link (P2 SHOULD)
+    ["pmi","bitcoin-cashu","explicit_gating"]        CEP-8 payment method + gating
+    ["name","nosms"] ["about",…] ["website",…]       payload only, not filterable (D2)
+
+What that means for a client, in plain terms:
+
+- **Only `d`, `r` and `t` are filterable.** Everything else is payload; do not
+  try to filter a relay on `cap`, `pmi`, `name` or `about` (D2).
+- **No geohash.** This service has no fixed location, and the spec forbids
+  publishing a meaningless `["g",…]` (P2).
+- **The declared appetite is money and nothing else.** `to` and `body` are tool
+  arguments, not fields a user is asked for, so they are not declared. The
+  recomputed tier is therefore `financial` (rank 1), and the `cvm:req:none`
+  sentinel rides along because rank <= financial means "no personal data".
+- **One `cap`, for one tool.** `sms.send` is the only tool that costs money; the
+  free tools carry no `cap`, because a price on a free tool would be a lie (P4).
+- The tier tag is a cache of the declared fields. If a reader ever finds them
+  disagreeing, the **fields win** — use the recomputed value and surface the
+  mismatch (ADR-0001 D14).
 
 ## Error contract
 

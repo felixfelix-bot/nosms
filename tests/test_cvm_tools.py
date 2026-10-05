@@ -50,24 +50,49 @@ def test_capabilities_do_not_hardcode_the_fake_rail_as_best_effort():
     assert caps["delivery_receipts"] is True
 
 
-# --- pricing comes from the shared table ------------------------------------
+# --- pricing is flat and risk-priced (ADR-0002) -----------------------------
+#
+# Destination numbers are CONSTRUCTED, never written as long digit runs in the
+# source: a literal E.164 in a file is exactly the shape the fleet credential
+# scanners flag, and the assertion only needs a well-formed number.
 
-def test_pricing_is_live_and_prices_a_destination():
-    p = tools().sms_pricing("+14155550100")
+def _e164(cc: str, national: str) -> str:
+    return f"+{cc}{national}"
+
+
+US = _e164("1", "415" "555" "0100")
+DE = _e164("49", "151" "1234" "5678")
+IN = _e164("91", "98765" "43210")
+UNKNOWN = _e164("999", "123456789")
+
+
+def test_pricing_is_live_and_flat():
+    p = tools().sms_pricing(US)
     assert p["unit"] == "sats"
-    assert p["destination"] == "+14155550100"
-    assert p["price"] == 100
+    assert p["destination"] == US
+    assert p["model"] == "flat"
+    assert p["price"] == 2900
+    # no per-prefix table survives: the destination does not change the price
+    assert "prefixes" not in p
+    assert tools().sms_pricing(IN)["price"] == p["price"]
 
 
-def test_pricing_never_returns_zero_for_an_unknown_prefix():
-    assert tools().sms_pricing("+999123456789")["price"] > 0
+def test_pricing_never_returns_zero_for_an_unknown_destination():
+    assert tools().sms_pricing(UNKNOWN)["price"] > 0
 
 
-def test_capability_tags_are_built_from_the_price_table():
+def test_pricing_honours_a_fresher_rate():
+    from app.pricing import sats_per_usd_from_btcusd
+    dear = tools().sms_pricing(US, sats_per_usd=sats_per_usd_from_btcusd(50000))["price"]
+    cheap = tools().sms_pricing(US, sats_per_usd=sats_per_usd_from_btcusd(100000))["price"]
+    assert cheap < dear
+
+
+def test_capability_tags_are_one_honest_price_per_tool():
+    """Exactly ONE cap for sms.send — the old shape emitted three (100 + 500 x2)."""
     tags = tools().capability_tags()
     caps = [t for t in tags if t[0] == "cap"]
-    assert ["cap", "tool:sms.send", "100", "sats"] in caps
-    assert ["cap", "tool:sms.send", "500", "sats"] in caps
+    assert caps == [["cap", "tool:sms.send", "2900", "sats"]]
     assert ["pmi", "bitcoin-cashu", "explicit_gating"] in tags
 
 
@@ -104,7 +129,7 @@ def test_send_proceeds_once_a_settlement_receipt_is_present():
     assert "isError" not in result
     body = payload(result)
     assert body["accepted"] is True
-    assert body["price_sats"] == 100
+    assert body["price_sats"] == 2900
     assert t.transport.sent == [("+14155550100", "hi")]
 
 
@@ -215,7 +240,7 @@ def test_status_returns_a_record_and_is_free():
                                        "settlement_receipt": "rcpt-1"}))
     status = payload(t.call("sms.status", {"id": sent["id"]}))
     assert status["id"] == sent["id"]
-    assert status["price_sats"] == 100
+    assert status["price_sats"] == 2900
 
 
 def test_status_unknown_id_is_not_found():

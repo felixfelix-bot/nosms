@@ -137,18 +137,33 @@ class CvmTools:
             "countries": list(caps.countries),
         }
 
-    def sms_pricing(self, to: str | None = None) -> dict:
-        """Live per-destination price in sats. Unknown prefix is never free."""
-        from .pricing import DEFAULT_PRICE_SATS, PREFIX_PRICES
+    def sms_pricing(self, to: str | None = None, sats_per_usd: float | None = None) -> dict:
+        """Live price in sats. ADR-0002: flat, risk-premium, never free.
+
+        The destination is validated but no longer changes the price; a caller
+        may pass a fresher ``sats_per_usd`` and the ADR-0002 formula is applied.
+        """
+        from .pricing import (
+            DEFAULT_PRICE_SATS,
+            RAIL_REPLACEMENT_USD,
+            RISK_MULTIPLIER,
+            quote_sats,
+        )
 
         out: dict[str, Any] = {
             "unit": "sats",
-            "prefixes": dict(PREFIX_PRICES),
-            "default": DEFAULT_PRICE_SATS,
+            "model": "flat",
+            "price": quote_sats(sats_per_usd) if sats_per_usd is not None else DEFAULT_PRICE_SATS,
+            "note": (
+                "flat domestic+international (ADR-0002): the v1 rail's plan is "
+                "unlimited including international, so destination does not map to cost"
+            ),
+            "formula": "ceil(MULT * rail_replacement_usd * sats_per_usd), rounded up to 100",
+            "risk_multiplier": RISK_MULTIPLIER,
+            "rail_replacement_usd": RAIL_REPLACEMENT_USD,
         }
         if to:
             out["destination"] = normalize_e164(to)
-            out["price"] = price_for(to)
         return out
 
     def sms_status(self, id: str) -> dict:
@@ -246,14 +261,18 @@ class CvmTools:
         ]
 
     def capability_tags(self) -> list[list[str]]:
-        """CEP-8 `cap` tags using the SHARED price table, not literals."""
-        from .pricing import DEFAULT_PRICE_SATS, PREFIX_PRICES
+        """CEP-8 `cap` tags. ADR-0002: ONE flat price per tool, not a prefix table.
 
-        domestic = PREFIX_PRICES["+1"]
-        intl = max(p for p in PREFIX_PRICES.values() if p != domestic)
+        The old shape emitted three `cap` tags for the same tool (100 / 500 /
+        default-500) built from the retired per-prefix table. A duplicate `cap`
+        for one tool has no defined meaning for a client asserting that the
+        invoice equals the advertised cap (CEP draft 0001 P4), and the three
+        numbers matched neither the table nor ADR-0002's flat price. One tool,
+        one price.
+        """
+        from .pricing import DEFAULT_PRICE_SATS
+
         return [
-            ["cap", "tool:sms.send", str(domestic), "sats"],
-            ["cap", "tool:sms.send", str(intl), "sats"],
             ["cap", "tool:sms.send", str(DEFAULT_PRICE_SATS), "sats"],
             ["pmi", "bitcoin-cashu", "explicit_gating"],
         ]
