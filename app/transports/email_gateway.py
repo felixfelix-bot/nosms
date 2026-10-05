@@ -20,6 +20,7 @@ import smtplib
 from email.message import EmailMessage
 
 from .base import Capabilities, SendResult
+from .errors import UnsupportedDestination   # re-exported: rail-agnostic now
 
 #: carrier id -> the gateway domains carriers actually accept mail on.
 #: Only domains verified to have MX records belong here.
@@ -39,13 +40,8 @@ CARRIER_GATEWAYS["att"] = ["mms.att.net"] if False else []
 MAX_BODY_CHARS = 140 * 4          # carriers truncate; callers must know
 
 
-class UnsupportedDestination(Exception):
-    """Raised when the rail cannot serve a destination, with a machine reason."""
-
-    def __init__(self, reason: str, detail: str = ""):
-        super().__init__(f"{reason}: {detail}" if detail else reason)
-        self.reason = reason
-        self.detail = detail
+# `UnsupportedDestination` is imported from `.errors` above and re-exported here
+# so the historical import path keeps working and one class is caught everywhere.
 
 
 def _e164(dest: str) -> str:
