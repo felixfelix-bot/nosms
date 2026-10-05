@@ -83,6 +83,36 @@ email rail): a Caribbean `+1` (Jamaica 876, Trinidad 868, …) or a US territory
 (Puerto Rico 787, USVI 340, Guam 671, …) is **not** US/CA and is refused, so the gate
 means exactly what `countries` advertises.
 
+## Acceptance = the stanza reached the stream, and the deadline cannot lie about it
+
+`SlixmppLink.send_message` blocks until the outbox entry is settled and raises
+`RailUnavailable` when the rail could not take the message — it is the only
+signal the refund path has, so a wrong answer is a money bug, not a cosmetics
+bug. Two properties hold (`app/transports/jmp_link.py`):
+
+* **The deadline and the hand-off are mutually exclusive.** `_sender` holds
+  `_handoff_lock` across the whole hand-off — *is the entry still wanted? →
+  `msg.send()` → settle the future* — and `send_message`'s timeout path takes the
+  same lock. Either the future is still pending (the cancel wins: `_sender`
+  skips a `done()` entry, so the stanza provably never goes out and a refundable
+  `connection_lost` is honest), or the hand-off already won and the future
+  carries its real outcome: accepted, or the sender's own failure. Reporting
+  "not sent" on a stanza that went out refunds a delivered message **and** lets
+  `FailoverTransport` re-send it over the email rail.
+* **Nothing inside the critical section may block.** The ack is settled
+  immediately after `msg.send()` (slixmpp's `send()` is non-blocking queueing)
+  and the outbox sqlite `INSERT` runs after it, off the loop thread. The log was
+  the >30 s stall that used to make a deadline expire on a message that had
+  already left the client; a broken inbox can no longer turn an accepted send
+  into a refund, or kill `_sender` (which would mute the rail while it still
+  reported itself available).
+
+A caller waiting on the lock is therefore bounded: the sender is only ever
+inside it for a non-blocking hand-off. If it somehow is not, the bounded wait
+expires and `send_message` returns acceptance rather than claiming "not sent" —
+a best-effort rail with no delivery receipts cannot prove the stanza did not
+go out.
+
 ## Pacing (ADR-0002 compensating control #2)
 
 The line is personal, so volume *is* the abuse surface. Two persisted limits, in

@@ -23,6 +23,10 @@ Notes
 * The destination/sender number is never printed here — the raw peer is written
   straight to the sqlite column (Hermes-style stdout redaction would destroy it
   if it ever passed through a log line).
+* ``send_message`` returning normally means the stanza reached the stream. Its
+  deadline and ``_sender``'s hand-off are mutually exclusive (``_handoff_lock``),
+  so a deadline can never report "not sent" for a message that went out — see
+  docs/jmp-rail.md, "Acceptance = the stanza reached the stream".
 * `slixmpp` is imported lazily so importing this module needs no XMPP stack.
 """
 from __future__ import annotations
@@ -84,6 +88,14 @@ class SlixmppLink:
         self._terminal_exhausted = False
         self._stopping = False
         self._dump_lock = threading.Lock()
+        #: Held by `_sender` across the whole hand-off (is the entry still
+        #: wanted? -> hand the stanza to the stream -> settle the future) and by
+        #: `send_message` while it decides whether its deadline may still recall
+        #: the entry. The two are therefore mutually exclusive: a cancelled
+        #: entry can never be transmitted. Nothing inside the critical section
+        #: may block (see `_sender`), so a caller waiting on it only waits for
+        #: the loop thread to be scheduled.
+        self._handoff_lock = threading.Lock()
         if self.inbox_db:
             self._init_inbox()
 
@@ -160,7 +172,8 @@ class SlixmppLink:
         """Queue one cold chat message and block until it is on the wire.
 
         Raises :class:`RailUnavailable` — never returns silently — when the
-        rail cannot carry it.
+        rail cannot carry it. Returning normally means the rail took it: the
+        stanza was handed to the stream.
         """
         if self._terminal_reason:
             raise RailUnavailable(self._terminal_reason)
@@ -179,15 +192,41 @@ class SlixmppLink:
             # timeout escape as an unexpected exception, breaking the
             # "only raises RailUnavailable" contract the refund path relies on.
             #
-            # CANCEL before giving up. The queue entry is still sitting in the
-            # outbox and `_sender` only skips entries whose future is done, so
-            # leaving it un-cancelled means the stanza is transmitted *after* the
-            # caller already reported accepted=False and the failover re-sent the
-            # same message over the email rail — the recipient gets it TWICE.
-            # A cancelled future is done(), so `_sender` skips it.
-            fut.cancel()
-            raise RailUnavailable("connection_lost",
-                                  "no acknowledgement before timeout") from exc
+            # An expired deadline is NOT evidence that the stanza did not go
+            # out, so the cancel below must race the hand-off *atomically*.
+            # `_sender` holds `_handoff_lock` across the whole hand-off and this
+            # path takes the same lock, which leaves exactly two outcomes:
+            #
+            # * the future is still pending -> cancel it. `_sender` skips a
+            #   done() entry, so the stanza provably never goes out and a
+            #   refundable `connection_lost` is the honest answer.
+            # * the hand-off won the race -> the future already carries its
+            #   outcome. Reporting "not sent" there refunds a message that went
+            #   out AND lets the failover re-send it over the email rail: the
+            #   recipient gets it twice.
+            if not self._handoff_lock.acquire(timeout=max(1.0, self.send_timeout)):
+                # The sender has been inside the hand-off for longer than the
+                # whole deadline. It cannot be recalled, and a best-effort rail
+                # with no delivery receipts cannot prove the message did not go
+                # out — so the one answer that must not be given is "not sent".
+                return
+            try:
+                if fut.cancel():
+                    raise RailUnavailable("connection_lost",
+                                          "no acknowledgement before timeout") from exc
+                try:
+                    fut.result(timeout=0)
+                except RailUnavailable:
+                    raise
+                except BaseException as failure:       # noqa: BLE001
+                    # `_sender` settled the entry with a failure of its own.
+                    raise RailUnavailable("connection_lost",
+                                          str(failure)[:120]) from exc
+                # Handed off before the deadline: the rail DID take it, and the
+                # caller was merely slow to be told.
+                return
+            finally:
+                self._handoff_lock.release()
         except RuntimeError as exc:
             # ``call_soon_threadsafe`` on a loop that has been closed (the link
             # was shut down while this send was in flight) raises RuntimeError.
@@ -276,62 +315,99 @@ class SlixmppLink:
         x.add_event_handler("stream_error", _on_stream_error)
         x.add_event_handler("message", self._on_message)
 
-        x.connect()                            # NOT awaited (proven pattern)
+        ok = False
         try:
-            ok = await asyncio.wait_for(started, timeout=self.connect_timeout)
-        except asyncio.TimeoutError:
-            ok = False
-        if not ok:
-            # A connect that failed (bad auth, stream error, or a timeout) leaves
-            # the underlying XMPP connection open; the supervise loop would then
-            # retry on top of it and leak one connection per attempt. Close it
-            # before returning so the next cycle starts from a clean socket.
+            x.connect()                        # NOT awaited (proven pattern)
             try:
-                x.disconnect()
-            except Exception:                  # noqa: BLE001 - best effort, never fatal
-                pass
-            self._client = None
-            self._set_disconnected(self._terminal_reason or "not_connected")
-            return
+                ok = await asyncio.wait_for(started, timeout=self.connect_timeout)
+            except asyncio.TimeoutError:
+                ok = False
+            if not ok:
+                self._set_disconnected(self._terminal_reason or "not_connected")
+                return
 
-        self._connected = True
-        self._ready.set()
-        sender = asyncio.ensure_future(self._sender(x))
-        self._client = x
-        self._sender_task = sender
-        try:
-            while x.is_connected() and not self._stopping:
-                await asyncio.sleep(0.5)
-        finally:
-            sender.cancel()
+            self._connected = True
+            self._ready.set()
+            sender = asyncio.ensure_future(self._sender(x))
+            self._client = x
+            self._sender_task = sender
             try:
-                await sender
-            except asyncio.CancelledError:
-                pass
-            self._client = None
-            self._sender_task = None
-            self._set_disconnected("connection_lost")
+                while x.is_connected() and not self._stopping:
+                    await asyncio.sleep(0.5)
+            finally:
+                sender.cancel()
+                try:
+                    await sender
+                except asyncio.CancelledError:
+                    pass
+                self._client = None
+                self._sender_task = None
+                self._set_disconnected("connection_lost")
+        finally:
+            if not ok:
+                # Every exit that never reached the steady state — a bad auth, a
+                # stream error, a connect timeout, or an exception out of
+                # `connect()` / `wait_for` — leaves the underlying XMPP
+                # connection open. Close it, or the supervised retry stacks one
+                # leaked connection per attempt.
+                try:
+                    x.disconnect()
+                except Exception:              # noqa: BLE001 - best effort, never fatal
+                    pass
+                self._client = None
 
     async def _sender(self, x) -> None:        # pragma: no cover - needs a live link
         while True:
             to_jid, body, msg_id, fut = await self._outbox.get()
-            if fut.done():
-                continue
+            # `_handoff_lock` makes the hand-off and the caller's deadline
+            # mutually exclusive, so a cancelled entry is never transmitted --
+            # and nothing inside it may block, or a caller would be pinned
+            # behind a stanza that is already gone. `msg.send()` is slixmpp's
+            # non-blocking queueing and the sqlite write is below, outside.
+            with self._handoff_lock:
+                if fut.done():
+                    # The caller's deadline expired and it cancelled the entry
+                    # before we claimed it. It was told "not sent" and the money
+                    # becomes refundable, so the stanza must NOT go out.
+                    continue
+                try:
+                    if not x.is_connected():
+                        raise RailUnavailable(self._terminal_reason or "connection_lost")
+                    msg = x.Message()
+                    msg["to"] = to_jid
+                    msg["type"] = "chat"
+                    msg["id"] = msg_id or uuid.uuid4().hex
+                    msg["body"] = body
+                    msg.send()
+                except RailUnavailable as exc:
+                    if not fut.done():
+                        fut.set_exception(exc)
+                    continue
+                except Exception as exc:       # noqa: BLE001
+                    if not fut.done():
+                        fut.set_exception(
+                            RailUnavailable("connection_lost", str(exc)[:120]))
+                    continue
+                # Settle the caller the moment the stanza is on the wire: the
+                # acknowledgement must not wait behind anything that can block,
+                # or a deadline expires on a message that has already gone out
+                # (which is what made the timeout double-deliver).
+                #
+                # Guarded on purpose: a settled future must never be touched
+                # again. `set_result` on a cancelled one raises
+                # `InvalidStateError`, and from the handlers above that would
+                # escape and kill this task -- muting the rail while it still
+                # advertised itself as available.
+                if not fut.done():
+                    fut.set_result(True)
+            # Bookkeeping, not the ack: a blocking sqlite INSERT, off the loop
+            # thread and never allowed to end the sender (a broken inbox must
+            # not take the rail down with it).
             try:
-                if not x.is_connected():
-                    raise RailUnavailable(self._terminal_reason or "connection_lost")
-                msg = x.Message()
-                msg["to"] = to_jid
-                msg["type"] = "chat"
-                msg["id"] = msg_id or uuid.uuid4().hex
-                msg["body"] = body
-                msg.send()
-                self._log("out", to_jid, body)
-                fut.set_result(True)
-            except RailUnavailable as exc:
-                fut.set_exception(exc)
-            except Exception as exc:           # noqa: BLE001
-                fut.set_exception(RailUnavailable("connection_lost", str(exc)[:120]))
+                await asyncio.get_running_loop().run_in_executor(
+                    None, self._log, "out", to_jid, body)
+            except Exception:                  # noqa: BLE001
+                pass
 
     # --- inbound (QA) -----------------------------------------------------
 
