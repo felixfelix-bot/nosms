@@ -1,0 +1,37 @@
+name: tests
+
+# D-132 CI evidence for this repo: the code tier of a kanban card is not
+# allowed to claim "CI green" from a narrative, so this workflow exists to
+# produce a real, per-commit, machine-readable run for the head under review.
+#
+# Scope note (honest): the fleet's ngit-CI gate tool
+# (`ngit_ci_evidence.py`) reads Nostr kind-9842 events published by the ngit CI
+# coordinator, whose watch list (`NGIT_CI_REPOS`) does not contain this repo, so
+# a run of THIS workflow is visible here on GitHub but is not readable by that
+# tool. It is still real CI: it runs the suite on every push and PR.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+      - name: Run the test suite
+        run: python -m pytest -q
