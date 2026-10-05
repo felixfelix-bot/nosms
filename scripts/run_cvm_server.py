@@ -43,6 +43,8 @@ sys.path.insert(0, str(REPO))
 
 from app.cvm_tools import CvmTools                      # noqa: E402
 from app.transports import EmailGatewayTransport, FakeTransport  # noqa: E402
+from app.wire import (CVM_KIND, build_inner_event, unwrap_envelope,  # noqa: E402
+                      wrap_cep4)
 
 CONTRACT_DIR = REPO / "napplet" / "src" / "contract"
 DEFAULT_RELAYS = ["wss://relay.primal.net"]
@@ -168,24 +170,22 @@ async def main() -> int:
         async def handle(self, relay_url, subscription_id, event):
             if event.kind().as_u16() not in GIFT_WRAP_KINDS:
                 return
+            # The outer envelope is addressed to the server *by p-tag*; both
+            # dialects set it, and the wrap's own author is ephemeral.
             if p_tag_of(event) != keys.public_key().to_hex():
                 return            # broad subscription; filter for us here
             try:
-                unwrapped = await client.unwrap_gift_wrap(event)
-            except Exception as exc:                              # noqa: BLE001
-                print(f"[nosms-cvm] unwrap failed: {exc}", file=sys.stderr)
+                envelope = await unwrap_envelope(keys, event)
+            except ValueError as exc:
+                # Not for us, or malformed — a real reason, not a transport string.
+                print(f"[nosms-cvm] drop envelope: {exc}", file=sys.stderr)
                 return
-            rumor = unwrapped.rumor()
-            if rumor.kind().as_u16() != CVM_KIND:
-                return
-            try:
-                rpc = json.loads(rumor.content())
-            except Exception:                                     # noqa: BLE001
-                return
+            rpc = envelope.rpc
             method = rpc.get("method")
             rpc_id = rpc.get("id")
-            caller = unwrapped.sender().to_hex()
-            print(f"[nosms-cvm] {method} id={rpc_id} from={caller[:12]}")
+            caller = envelope.sender.to_hex()
+            print(f"[nosms-cvm] {method} id={rpc_id} from={caller[:12]} "
+                  f"dialect={'nip59' if envelope.nip59 else 'cep4'}")
 
             if method == "tools/list":
                 result = {"tools": tools.tool_definitions()}
@@ -203,11 +203,19 @@ async def main() -> int:
                     "isError": True}
 
             response = {"jsonrpc": "2.0", "id": rpc_id, "result": result}
-            reply = EventBuilder(Kind(CVM_KIND), json.dumps(response)).tags(
-                [Tag.public_key(unwrapped.sender())]).build(keys.public_key())
+            # Answer in the dialect the caller used: a shell's CEP-4 transport
+            # cannot read a NIP-59 seal, and a NIP-59-only client (cvmi) cannot
+            # read a bare CEP-4 envelope.
             try:
-                out = await client.gift_wrap(unwrapped.sender(), reply, [])
-                print(f"[nosms-cvm] replied -> {out}")
+                if envelope.nip59:
+                    inner = build_inner_event(keys, envelope.sender, response)
+                    out = await client.gift_wrap(envelope.sender, inner, [])
+                    print(f"[nosms-cvm] replied (nip59) -> {out}")
+                else:
+                    reply = wrap_cep4(keys, envelope.sender,
+                                      build_inner_event(keys, envelope.sender, response))
+                    out = await client.send_event(reply)
+                    print(f"[nosms-cvm] replied (cep4) -> {out}")
             except Exception as exc:                              # noqa: BLE001
                 print(f"[nosms-cvm] reply failed: {exc}", file=sys.stderr)
 
