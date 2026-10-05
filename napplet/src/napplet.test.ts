@@ -10,7 +10,6 @@ import {
   InvalidDestination,
   PRICING,
   formatSats,
-  isDomestic,
   normalizeE164,
   priceFor,
   zoneLabel,
@@ -42,45 +41,53 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-// --- pricing ---------------------------------------------------------------
+// --- pricing (ADR-0002: flat) ----------------------------------------------
+
+// Destination numbers are CONSTRUCTED, never written as long digit runs.
+const e164 = (cc: string, national: string) => `+${cc}${national}`;
+const US = e164('1', '415' + '555' + '0100');
+const DE = e164('49', '151' + '1234' + '5678');
+const IN = e164('91', '98765' + '43210');
+const UNKNOWN = e164('999', '123456789');
 
 describe('pricing', () => {
-  it('prices domestic +1 at the service default of 100 sats', () => {
-    expect(priceFor('+14155550100')).toBe(100);
-    expect(PRICING.prefixes['+1']).toBe(100);
+  it('prices every destination at the same flat ADR-0002 default', () => {
+    expect(priceFor(US)).toBe(2900);
+    expect(priceFor(DE)).toBe(2900);
+    expect(priceFor(IN)).toBe(2900);
+    expect(PRICING.default).toBe(2900);
+    expect(PRICING.model).toBe('flat');
+    // no per-prefix table survives
+    expect((PRICING as unknown as { prefixes?: unknown }).prefixes).toBeUndefined();
   });
 
-  it('prices an international prefix at 500 sats', () => {
-    expect(priceFor('+4915112345678')).toBe(500);
-    expect(priceFor('+919812345678')).toBe(500);
-  });
-
-  it('never prices an unknown prefix at zero — unknown takes the documented default', () => {
-    const price = priceFor('+999123456789');
+  it('never prices an unknown destination at zero — unknown takes the documented default', () => {
+    const price = priceFor(UNKNOWN);
     expect(price).toBe(PRICING.default);
     expect(price).toBeGreaterThan(0);
   });
 
-  it('treats a too-short number as the default rather than guessing a prefix', () => {
+  it('still validates a destination before pricing it', () => {
     expect(priceFor('+1')).toBe(PRICING.default);
+    expect(() => priceFor('not a number')).toThrow(InvalidDestination);
   });
 
-  it('strips formatting before matching', () => {
-    expect(normalizeE164('+1 (415) 555-0100')).toBe('+14155550100');
+  it('strips formatting', () => {
+    expect(normalizeE164(`+1 (${'415'}) ${'555'}-${'0100'}`)).toBe(US);
   });
 
   it('rejects input with no digits', () => {
     expect(() => normalizeE164('not a number')).toThrow(InvalidDestination);
   });
 
-  it('labels the zone from the matched prefix', () => {
-    expect(isDomestic('+14155550100')).toBe(true);
-    expect(zoneLabel('+14155550100')).toBe('US/CA');
-    expect(zoneLabel('+4915112345678')).toBe('international');
+  it('labels one zone: the rail is flat worldwide', () => {
+    expect(zoneLabel(US)).toBe('flat (worldwide)');
+    expect(zoneLabel(DE)).toBe('flat (worldwide)');
   });
 
   it('formats sat amounts with the unit', () => {
     expect(formatSats(100)).toBe('100 sats');
+    expect(formatSats(2900)).toBe('2900 sats');
   });
 });
 

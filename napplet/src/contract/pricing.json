@@ -1,13 +1,12 @@
 {
   "_generated_by": "scripts/export_contract.py from app/pricing.py",
   "unit": "sats",
-  "prefixes": {
-    "+351": 500,
-    "+49": 500,
-    "+44": 500,
-    "+91": 500,
-    "+1": 100
-  },
-  "default": 500,
-  "min_e164_len": 8
+  "model": "flat",
+  "default": 2900,
+  "min_e164_len": 8,
+  "formula": "ceil(MULT * rail_replacement_usd * sats_per_usd), rounded up to 100",
+  "risk_multiplier": 0.5,
+  "rail_replacement_usd": 4.99,
+  "_btcusd_at_default": 86462,
+  "_sats_per_usd_at_default": 1156.58
 }

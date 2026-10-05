@@ -20,7 +20,13 @@ import sys
 REPO = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from app.pricing import DEFAULT_PRICE_SATS, MIN_E164_LEN, PREFIX_PRICES  # noqa: E402
+from app.pricing import (  # noqa: E402
+    DEFAULT_PRICE_SATS,
+    MIN_E164_LEN,
+    RAIL_REPLACEMENT_USD,
+    RISK_MULTIPLIER,
+    sats_per_usd_from_btcusd,
+)
 
 CONTRACT = REPO / "napplet" / "src" / "contract"
 PRICING_OUT = CONTRACT / "pricing.json"
@@ -28,14 +34,28 @@ SERVER_OUT = CONTRACT / "server.json"
 KEY_FILE = REPO / ".cvm-server.nsec"
 DEFAULT_RELAYS = ["wss://relay.primal.net"]
 
+#: BTCUSD quote the shipped default was computed at (ADR-0002, 2026-10-05).
+BTCUSD_AT_ADR = 86462
+
 
 def pricing_payload() -> dict:
+    """ADR-0002 flat pricing. No per-prefix table: the rail's cost has none.
+
+    Kept in step with ``CvmTools.sms_pricing`` and ``CvmTools.capability_tags`` —
+    all three read ``app/pricing.py``, so the napplet's pre-send price, the CEP-8
+    cap tag and the server's metered price cannot disagree (CEP draft 0001 P4).
+    """
     return {
         "_generated_by": "scripts/export_contract.py from app/pricing.py",
         "unit": "sats",
-        "prefixes": dict(sorted(PREFIX_PRICES.items(), key=lambda kv: -len(kv[0]))),
+        "model": "flat",
         "default": DEFAULT_PRICE_SATS,
         "min_e164_len": MIN_E164_LEN,
+        "formula": "ceil(MULT * rail_replacement_usd * sats_per_usd), rounded up to 100",
+        "risk_multiplier": RISK_MULTIPLIER,
+        "rail_replacement_usd": RAIL_REPLACEMENT_USD,
+        "_btcusd_at_default": BTCUSD_AT_ADR,
+        "_sats_per_usd_at_default": round(sats_per_usd_from_btcusd(BTCUSD_AT_ADR), 2),
     }
 
 
