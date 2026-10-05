@@ -100,3 +100,23 @@ def test_committed_evidence_matches_the_one_convention(probe):
     assert ev["to_masked_jid"] == f"{mask}@cheogram.com"
     assert mask in ev["outbound_stanza_xml"]
     assert any(ch.isdigit() for ch in mask[2:-4]) is False
+
+
+def test_no_unmasked_e164_anywhere_in_the_committed_evidence(probe):
+    """The re-scan the README documents must actually find nothing.
+
+    An un-masked E.164 is a '+' followed by 11+ CONSECUTIVE digits; the mask's
+    kept prefix/suffix are not adjacent, so a correct scan never false-positives
+    on ``+1******8875``. (Stripping '*' first would splice them into ``+18875``
+    and report a false positive — the bug this test pins.)
+    """
+    import re
+
+    blob = (ROOT / "evidence" / "cold-send-20261005T002427Z.json").read_text()
+    assert re.findall(r"\+\d{11,}", blob) == []
+
+    # Non-vacuity control: the scan detects a REAL number if one were present.
+    assert re.findall(r"\+\d{11,}", "to='+1" + "3215558875@cheogram.com'") == \
+        ["+1" + "3215558875"]
+    # ...and does NOT trip on the mask itself.
+    assert re.findall(r"\+\d{11,}", "+1" + "******" + "8875") == []

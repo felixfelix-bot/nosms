@@ -100,11 +100,15 @@ Re-scan after a change: `gitleaks detect -c .gitleaks.toml` covers the repo, and
 
 ```bash
 python - <<'PY'
-import json, re, pathlib
+import re, pathlib
 blob = pathlib.Path("evidence/cold-send-20261005T002427Z.json").read_text()
-bad = re.findall(r"\+\d{2,}", blob.replace("*", ""))
+# An un-masked E.164 is a '+' followed by 11 CONSECUTIVE digits. Do NOT strip
+# '*' first: that would splice the mask's kept prefix and suffix into a run and
+# report a false positive (e.g. '+1******8875' -> '+18875').
+bad = re.findall(r"\+\d{11,}", blob)
 print("un-masked E.164 runs:", bad or "none")
 PY
 ```
 
-prints the un-masked E.164 runs (expected: none).
+prints the un-masked E.164 runs (expected: none). `tests/test_jmp_probe.py` pins this same
+check, so a hand-edit that reintroduced a real number would fail the suite, not just the scan.
