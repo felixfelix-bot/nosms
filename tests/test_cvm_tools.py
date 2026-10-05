@@ -342,6 +342,40 @@ def test_a_raising_rail_that_is_best_effort_still_answers_the_caller():
     assert result and result["content"]
 
 
+class DownRailTransport(FakeTransport):
+    """The sibling JMP rail's shape when the line is down: a SendResult, not an
+    exception, with `detail` prefixed `rail_unavailable:`."""
+    name = "down-rail"
+
+    def send(self, dest, body, **kwargs):
+        from app.transports.base import SendResult
+        return SendResult(accepted=False, rail=self.name, best_effort=True,
+                          receipt=None, detail="rail_unavailable:terminated")
+
+
+def test_a_down_rail_is_refunded_and_never_charged_as_a_send_failure(tmp_path):
+    """A downed rail never attempted the message, so the postage goes back —
+    and the caller is told the RAIL is down, not that their send failed."""
+    t = tools(DownRailTransport(), mint=StubMint(fee_ppk=0),
+              escrow=EscrowStore(str(tmp_path / "e.db")))
+    result = t.call("sms.send", {"to": "+15555550100", "body": "hi",
+                                 "cashu_token": make_token([4096])})
+    body = assert_visible_error(result, "rail_unavailable")
+    assert body["refunded"] is True
+    assert body["refund_token"]
+    assert body["rail"] == "down-rail"
+    assert t.escrow.get(list(t.escrow.list_all())[0].message_id).refunded is True
+
+
+def test_is_rail_down_only_matches_the_prefix_not_a_plain_failure():
+    from app.cvm_tools import is_rail_down
+    from app.transports.base import SendResult
+    down = SendResult(False, "r", True, None, detail="rail_unavailable:auth_failed")
+    plain = SendResult(False, "r", True, None, detail="smtp send failed")
+    ok = SendResult(True, "r", True, None, detail="rail_unavailable:")
+    assert is_rail_down(down) and not is_rail_down(plain) and not is_rail_down(ok)
+
+
 # --- destination gate ------------------------------------------------------
 
 def test_a_destination_outside_the_rails_countries_is_refused_before_payment():

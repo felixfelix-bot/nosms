@@ -38,6 +38,7 @@ from .cashu import (
 )
 from .cvm import (
     ContractContext,
+    RAIL_UNAVAILABLE_PREFIX,
     SERVER_ABOUT,
     SERVER_NAME,
     SERVER_VERSION,
@@ -81,6 +82,17 @@ DOCS_ALIASES = (TOOL_DOCS, "llms")
 DOCS_FULL_ALIASES = ("llms-full", "llms_full")
 
 FREE_TOOLS = (TOOL_STATUS, TOOL_PRICING, TOOL_CAPABILITIES, TOOL_DOCS, "llms")
+
+
+def is_rail_down(result) -> bool:
+    """True when a SendResult means "the rail is down", not "this send failed".
+
+    A downed rail never attempted the message, so postage must go straight back.
+    Recognised by the shared ``rail_unavailable:`` prefix in ``detail``, which
+    every rail agrees on (see app/cvm.py) — no rail-specific import needed.
+    """
+    return bool(not getattr(result, "accepted", False)
+                and str(getattr(result, "detail", "")).startswith(RAIL_UNAVAILABLE_PREFIX))
 
 
 @dataclass
@@ -308,6 +320,7 @@ class CvmTools:
                     pmi="bitcoin-cashu", gating="explicit_gating")
 
         record_id = "snd_" + secrets.token_hex(8)
+        change_sats = (held or {}).get("change_sats", 0)
 
         def _escrow_held() -> tuple[str | None, str | None]:
             if held and self.escrow is not None:
@@ -318,30 +331,57 @@ class CvmTools:
             return None, None
 
         escrow_token, change_token = _escrow_held()
-        # Bound before the rail is called: the failure branch below records the
-        # escrow row, and a rail that RAISES must not hit an unbound local
-        # (found live against the email rail, which refuses non-+1 destinations).
-        change_sats = (held or {}).get("change_sats", 0)
 
         # --- hand it to the rail -----------------------------------------
+        #
+        # A rail reports two kinds of failure and they must NOT be conflated:
+        #
+        #   * a REQUEST problem (`UnsupportedDestination`) — the rail cannot
+        #     serve this destination. Decided before any money moves; refund it
+        #     but blame the request, not the rail.
+        #   * a RAIL problem (`RailUnavailable`, `RailPaced`) — the rail is down,
+        #     or pacing declined so the message was never attempted. Both are
+        #     refund events and neither may be charged for.
+        #
+        # The sibling JMP rail signals a downed line through
+        # `SendResult.detail == "rail_unavailable:<reason>"` rather than by
+        # raising, so both shapes are handled. A best-effort rail that merely
+        # could not confirm delivery is NOT refunded.
+        rail_name = getattr(self.transport, "name", "unknown")
+
+        def _record_failure(reason: str, detail: str) -> None:
+            if self.escrow is None:
+                return
+            self.escrow.create(
+                message_id=record_id, pubkey=caller or "anonymous", dest=number,
+                rail=rail_name, price=0 if owner else price,
+                change=0 if owner else change_sats,
+                escrow_token=escrow_token, change_token=change_token,
+                status="failed", provider_status=f"{reason}: {detail}")
+
+        def _refund_or_none(reason: str) -> str | None:
+            if owner:
+                return None
+            return self._refund(reason, held=held, message_id=record_id)
+
         try:
             result = self.transport.send(number, body)
         except Exception as exc:                                 # noqa: BLE001
-            # A rail that RAISES refused the message and the refusal carries a
-            # countable reason; postage that was captured goes straight back.
             reason = getattr(exc, "reason", "transport_error")
             detail = getattr(exc, "detail", "") or str(exc)
-            if self.escrow is not None:
-                self.escrow.create(
-                    message_id=record_id, pubkey=caller or "anonymous", dest=number,
-                    rail=getattr(self.transport, "name", "unknown"),
-                    price=0 if owner else price, change=0 if owner else change_sats,
-                    escrow_token=escrow_token, change_token=change_token,
-                    status="failed", provider_status=f"{reason}: {detail}")
-            refund_token = None if owner else self._refund(reason, held=held,
-                                                           message_id=record_id)
+            _record_failure(reason, detail)
+            refund_token = _refund_or_none(reason)
             raise ToolError(reason, detail, refunded=refund_token is not None,
                             refund_token=refund_token) from exc
+
+        if not result.accepted and is_rail_down(result):
+            # The rail is down (or paced out): the message was never attempted,
+            # so the postage is handed straight back and the caller is told.
+            reason = result.detail.split(":", 1)[1] if ":" in result.detail else "rail_unavailable"
+            _record_failure(reason, result.detail)
+            refund_token = _refund_or_none(reason)
+            raise ToolError("rail_unavailable", result.detail, rail=rail_name,
+                            refunded=refund_token is not None, refund_token=refund_token)
 
         if self.escrow is not None:
             self.escrow.create(

@@ -30,6 +30,12 @@ ANNOUNCEMENT_KINDS = (ANNOUNCE_SERVER, ANNOUNCE_TOOLS)
 #: gift-wrap kinds carrying the encrypted traffic.
 GIFT_WRAP_KINDS = (1059, 21059)
 
+#: Prefix a rail uses to mark a SendResult as "the rail is down", not "this send
+#: failed". A downed rail never attempted the message, so it is a refund event.
+#: Kept here (not imported from a transport) so every rail can agree on it and
+#: the CVM layer never has to import a specific rail to understand a failure.
+RAIL_UNAVAILABLE_PREFIX = "rail_unavailable:"
+
 #: Relays verified live on 2026-10-05 by an independent second-key run.
 #:
 #: * relay.contextvm.org and relay2.contextvm.org are BOTH alive (strfry,

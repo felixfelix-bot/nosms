@@ -98,7 +98,8 @@ Returns this manual.
 Every refusal is a JSON-RPC `result` with `isError: true` and a body carrying a
 machine `reason` and a human `hint`. Reasons: `payment_required`,
 `insufficient_funds`, `bad_destination`, `destination_unsupported`,
-`rail_not_configured`, `transport_error`, `rate_limited`, `owner_only`,
+`rail_not_configured`, `transport_error`, `rail_unavailable`, `rail_paced`,
+`rate_limited`, `owner_only`,
 `token_invalid`, `token_wrong_mint`, `token_already_spent`, `token_state_unknown`,
 `mint_error`, `mint_unreachable`, `not_found`, `unsupported method`.
 
