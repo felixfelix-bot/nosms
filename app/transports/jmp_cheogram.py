@@ -36,6 +36,7 @@ from typing import Protocol, runtime_checkable
 
 from .base import Capabilities, SendResult
 from .errors import RailPaced, RailUnavailable, UnsupportedDestination
+from .nanp import is_us_ca
 from .pacing import Pacer
 
 __all__ = ["JmpCheogramTransport", "JmpLink", "RAIL_UNAVAILABLE_PREFIX",
@@ -55,7 +56,13 @@ def _e164(dest: str) -> str:
 
 
 def _is_us_ca(number: str) -> bool:
-    return number.startswith("+1") and len(number) == 12
+    """US or Canada exactly — the shared NANP gate (see :mod:`app.transports.nanp`).
+
+    ``countries`` advertises ``["US", "CA"]``, so a Caribbean ``+1`` (Jamaica,
+    Trinidad, …) or a US territory (Puerto Rico, USVI, Guam, …) is *not* US/CA and
+    must be refused like any other unsupported destination.
+    """
+    return is_us_ca(number)
 
 
 @runtime_checkable

@@ -8,8 +8,13 @@ a brand-new `<message>` built from scratch and addressed to
 a service rail can use.
 
 Honesty rules:
-  * The destination number is **never** written to stdout (masked as
-    ``+1***...***8875``); the raw stanza is written to the evidence file.
+  * The destination number is **redacted by construction** in everything this
+    script writes: one convention, :func:`mask` (`+1` and the last four digits),
+    applied to the `to_masked`/`to_masked_jid` fields *and* to every stanza in
+    the evidence record. There is no field carrying an un-masked destination, so
+    a published record cannot disagree with the README about how it is masked.
+    The un-redacted record is opt-in (`--raw-out`) and belongs outside version
+    control.
   * ``accepted`` is a *rail-level* statement: the stanza went out and no error /
     refusal stanza came back inside the wait window. It is **not** a delivery
     receipt — this rail has none (ADR-0002). Handset receipt is operator-verified.
@@ -20,7 +25,7 @@ Usage
   python scripts/jmp_cold_send_probe.py --list-peers
   python scripts/jmp_cold_send_probe.py --from-inbox --dry-run
   python scripts/jmp_cold_send_probe.py --from-inbox --out evidence/cold-send.json
-  python scripts/jmp_cold_send_probe.py --to +13215551234 --body "hi" --out ev.json
+  python scripts/jmp_cold_send_probe.py --to +1XXXXXXXXXX --body "hi" --out ev.json
 """
 from __future__ import annotations
 
@@ -38,18 +43,99 @@ DEFAULT_JID = "hermes-jmp@jabber.fr"
 DEFAULT_CRED = "~/.xmpp-hermes-jmp@jabber.fr.json"
 DEFAULT_INBOX = "~/.hermes/profiles/manager/state/jmp_inbox.db"
 SMS_JID = re.compile(r"^(\+\d{7,15})@cheogram\.com$", re.I)
+#: Any E.164 run in a free-text blob (a stanza's to=/from=, or a body).
+E164_ANY = re.compile(r"\+\d{7,15}")
 
 
 def mask(number: str) -> str:
-    """Mask an E.164 number for human-readable logs (keeps +1 and last 4)."""
+    """The ONE masking convention: `+1` and the last four digits.
+
+    Used for human-readable logs, for the evidence record's destination fields,
+    and for redacting stanzas. Every committed artefact uses exactly this shape;
+    nothing else may invent a second mask for the same number.
+    """
     d = "".join(ch for ch in number if ch.isdigit())
     if len(d) <= 5:
         return "*" * len(d)
     return f"+{d[:1]}{'*' * (len(d) - 5)}{d[-4:]}"
 
 
+def redact(text: str) -> str:
+    """Replace every E.164 run in ``text`` with :func:`mask` of itself.
+
+    Idempotent (a masked number has no 7-digit run left to match), so it can be
+    applied to a stanza more than once without mangling it.
+    """
+    return E164_ANY.sub(lambda m: mask(m.group(0)), text or "")
+
+
 def e164(number: str) -> str:
     return "+" + "".join(ch for ch in number if ch.isdigit())
+
+
+def redacted_jid(number: str) -> str:
+    """The masked Cheogram JID — the only form of the destination ever published."""
+    return f"{mask(number)}@cheogram.com"
+
+
+def build_evidence(*, jid: str, to_number: str, msg_id: str, body: str,
+                   sent: bool, sent_at: float, stanza_xml: str,
+                   responses: list[dict]) -> dict:
+    """Build the publishable evidence record — redacted by construction.
+
+    There is deliberately no ``to_raw`` field: a field named "raw" must not hold
+    a masked value (cold-review finding), and the raw destination must not be
+    committed at all. Callers that need the un-redacted record write it
+    separately via ``--raw-out``.
+    """
+    return {
+        "probe": "jmp_cold_send",
+        "jid": jid,
+        "to_masked": mask(to_number),
+        "to_masked_jid": redacted_jid(to_number),
+        "msg_id": msg_id,
+        "body": body,
+        "sent": sent,
+        "sent_at": sent_at,
+        "outbound_stanza_xml": redact(stanza_xml),
+        "responses": [{**r, "stanza_xml": redact(r.get("stanza_xml", ""))}
+                      for r in responses],
+        "accepted": bool(sent and not [
+            r for r in responses
+            if r.get("kind") == "stream_error" or r.get("type") == "error"]),
+        "note": ("accepted == stanza left the client and no error/refusal stanza "
+                 "arrived within the wait window; NOT a delivery receipt"),
+        "redaction_note": (
+            "the destination is masked with mask() (+1 plus the last four digits) "
+            "in every field and in every stanza above — this file holds no "
+            "un-masked destination. The un-redacted record is kept outside "
+            "version control (--raw-out)."),
+    }
+
+
+def raw_evidence(*, jid: str, to_number: str, msg_id: str, body: str,
+                 sent: bool, sent_at: float, stanza_xml: str,
+                 responses: list[dict]) -> dict:
+    """The un-redacted record. Never commit this: it carries the real JID."""
+    return {
+        "probe": "jmp_cold_send",
+        "jid": jid,
+        "to_masked": mask(to_number),
+        "to_raw": f"{e164(to_number)}@cheogram.com",
+        "msg_id": msg_id,
+        "body": body,
+        "sent": sent,
+        "sent_at": sent_at,
+        "outbound_stanza_xml": stanza_xml,
+        "responses": responses,
+        "accepted": bool(sent and not [
+            r for r in responses
+            if r.get("kind") == "stream_error" or r.get("type") == "error"]),
+        "note": ("accepted == stanza left the client and no error/refusal stanza "
+                 "arrived within the wait window; NOT a delivery receipt"),
+        "WARNING": "UN-REDACTED: contains the real destination JID. Keep out of "
+                   "version control; publish the masked record from --out instead.",
+    }
 
 
 def inbox_peers(db_path: str) -> list[tuple[str, str]]:
@@ -177,21 +263,10 @@ async def run(args) -> int:
 
     refusal = [r for r in responses if r["kind"] == "stream_error"
                or r["type"] == "error"]
-    evidence = {
-        "probe": "jmp_cold_send",
-        "jid": jid,
-        "to_masked": mask(to_number),
-        "to_raw": f"{e164(to_number)}@cheogram.com",
-        "msg_id": msg_id,
-        "body": body,
-        "sent": sent,
-        "sent_at": sent_at,
-        "outbound_stanza_xml": stanza_xml,
-        "responses": responses,
-        "accepted": bool(sent and not refusal),
-        "note": ("accepted == stanza left the client and no error/refusal stanza "
-                 "arrived within the wait window; NOT a delivery receipt"),
-    }
+    fields = dict(jid=jid, to_number=to_number, msg_id=msg_id, body=body,
+                  sent=sent, sent_at=sent_at, stanza_xml=stanza_xml,
+                  responses=responses)
+    evidence = build_evidence(**fields)
     if args.out:
         out = os.path.expanduser(args.out)
         os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
@@ -200,6 +275,14 @@ async def run(args) -> int:
         print(json.dumps({"event": "evidence_written", "path": out,
                           "accepted": evidence["accepted"],
                           "responses": len(responses)}))
+    if args.raw_out:
+        raw = os.path.expanduser(args.raw_out)
+        os.makedirs(os.path.dirname(raw) or ".", exist_ok=True)
+        with open(raw, "w") as fh:
+            json.dump(raw_evidence(**fields), fh, indent=2)
+        os.chmod(raw, 0o600)
+        print(json.dumps({"event": "raw_evidence_written", "path": raw,
+                          "warning": "un-redacted: keep out of version control"}))
     print(json.dumps({"event": "result", "accepted": evidence["accepted"],
                       "refusals": len(refusal),
                       "response_kinds": [r["kind"] for r in responses]}))
@@ -217,7 +300,9 @@ def main() -> int:
                     help="explicitly source the destination from the inbox DB")
     ap.add_argument("--body")
     ap.add_argument("--nonce", default=uuid.uuid4().hex[:8])
-    ap.add_argument("--out", help="evidence JSON path (raw stanza lives here)")
+    ap.add_argument("--out", help="publishable evidence JSON path (redacted)")
+    ap.add_argument("--raw-out",
+                    help="un-redacted evidence JSON path — never commit it")
     ap.add_argument("--jid", default=DEFAULT_JID)
     ap.add_argument("--cred", default=DEFAULT_CRED)
     ap.add_argument("--inbox", default=DEFAULT_INBOX)
@@ -234,8 +319,8 @@ def main() -> int:
         rows = inbox_peers(os.path.expanduser(args.inbox))
         print(json.dumps({"inbox": os.path.expanduser(args.inbox),
                           "count": len(rows),
-                          "peers": [{"peer": mask(SMS_JID.match(p).group(1))
-                                     if SMS_JID.match(p or "") else p,
+                          "peers": [{"peer": redact(p) if SMS_JID.match(p or "")
+                                     else p,
                                      "direction": d} for p, d in rows]}))
         return 0
 

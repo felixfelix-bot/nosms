@@ -327,6 +327,25 @@ def test_release_rejects_a_forged_claim():
     assert pacer.snapshot()["state"]["count"] == 0
 
 
+def test_record_send_refuses_when_the_state_is_corrupt(tmp_path):
+    """The un-reserved shortcut must not quietly count against a corrupt file."""
+    state = tmp_path / "jmp_pacing.json"
+    state.write_text("{ broken")
+    pacer = _pacer(state_path=str(state))
+    with pytest.raises(ValueError):
+        pacer.record_send()
+
+
+def test_a_state_that_is_json_but_not_an_object_is_corrupt_too(tmp_path):
+    """A list/number is valid JSON but not a counter: fail closed, never crash."""
+    state = tmp_path / "jmp_pacing.json"
+    state.write_text("[1, 2, 3]")
+    assert _pacer(state_path=str(state)).check().reason == "pacing_state_corrupt"
+
+    state.write_text('{"count": "not-a-number"}')
+    assert _pacer(state_path=str(state)).check().reason == "pacing_state_corrupt"
+
+
 def test_a_paced_claim_is_never_recorded_as_a_send():
     clock = Clock(0.0)
     pacer = _pacer(PacingPolicy(daily_cap=2, min_gap_seconds=0, max_gap_seconds=0),

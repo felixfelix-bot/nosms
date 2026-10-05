@@ -103,14 +103,62 @@ def test_send_normalises_a_pretty_printed_number():
     assert link.sent[0][0] == "+15551230000@cheogram.com"
 
 
-@pytest.mark.parametrize("dest", ["+4915112345678", "+911234567890", "0049151"])
-def test_non_us_ca_is_refused_before_the_link_is_touched(dest):
+@pytest.mark.parametrize("dest_rest", ["491" + "1512345678", "91" + "1234567890"])
+def test_non_us_ca_is_refused_before_the_link_is_touched(dest_rest):
     link = FakeLink()
     rail = JmpCheogramTransport(link)
+    with pytest.raises(UnsupportedDestination) as excinfo:
+        rail.send("+" + dest_rest, "hello")
+    assert excinfo.value.reason == "destination_unsupported"
+    assert link.sent == []
+
+
+def test_a_non_plus_number_is_refused():
+    link = FakeLink()
+    with pytest.raises(UnsupportedDestination):
+        JmpCheogramTransport(link).send("0049" + "1512345678", "hello")
+    assert link.sent == []
+
+
+# NANP area codes that are NOT US or Canada. Each is a valid +1 NPA, so only an
+# explicit list can refuse them.
+NANP_NOT_US_CA = ["242", "246", "264", "268", "284", "340", "345", "441", "473",
+                  "649", "658", "664", "670", "671", "684", "721", "758", "767",
+                  "784", "787", "809", "829", "849", "868", "869", "876", "939"]
+
+
+@pytest.mark.parametrize("npa", NANP_NOT_US_CA)
+def test_nanp_countries_that_are_not_us_ca_are_refused(npa):
+    """`countries` advertises ["US", "CA"], so the gate must mean US/CA exactly —
+    a Caribbean `+1` (Jamaica 876, Trinidad 868, …) and a US territory
+    (Puerto Rico 787, USVI 340, Guam 671, …) are neither."""
+    link = FakeLink()
+    rail = JmpCheogramTransport(link)
+    dest = f"+1{npa}" + "5550000"
     with pytest.raises(UnsupportedDestination) as excinfo:
         rail.send(dest, "hello")
     assert excinfo.value.reason == "destination_unsupported"
     assert link.sent == []
+
+
+@pytest.mark.parametrize("npa", ["585", "416", "306", "604", "212", "902"])
+def test_us_and_canada_area_codes_are_accepted(npa):
+    link = FakeLink()
+    dest = f"+1{npa}" + "5550000"
+    JmpCheogramTransport(link).send(dest, "hi")
+    assert link.sent and link.sent[0][0].endswith("@cheogram.com")
+
+
+def test_both_us_ca_gates_agree():
+    """One definition of US/CA, not a second copy per rail."""
+    from app.transports.email_gateway import is_us_ca as email_gate
+    from app.transports.jmp_cheogram import _is_us_ca as jmp_gate
+    samples = ["+1" + "5551230000", "+1" + "6042340000", "+1" + "8765550000",
+               "+1" + "8685550000", "+1" + "7875550000", "+1" + "3405550000",
+               "+49" + "15112345678", "0049" + "151", "+1" + "12345"]
+    assert [jmp_gate(s) for s in samples] == [email_gate(s) for s in samples]
+    assert jmp_gate("+1" + "8765550000") is False
+    assert jmp_gate("+1" + "6042340000") is True
 
 
 def test_empty_body_is_a_rejected_send_not_an_exception():

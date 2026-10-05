@@ -40,13 +40,14 @@ On **2026-10-05T00:24:27Z** a brand-new stanza was sent to the newest inbound pe
 
 ```xml
 <message xmlns="jabber:client" id="ba7d0fd7000445c69745f915bad3b307" xml:lang="en"
-         to="+132****8875@cheogram.com" type="chat">
+         to="+1******8875@cheogram.com" type="chat">
   <body>nosms cold-send probe 799a131b — unsolicited outbound, not a reply. 2026-10-05T00:24:27Z</body>
 </message>
 ```
 
 Result: **accepted** — no error/refusal stanza in a 25 s window. Raw artefact:
-[`evidence/cold-send-20261005T002427Z.json`](../evidence/cold-send-20261005T002427Z.json).
+[`evidence/cold-send-20261005T002427Z.json`](../evidence/cold-send-20261005T002427Z.json)
+(the destination is redacted by construction; `evidence/README.md` §4 has the convention).
 The adapter’s own link was then exercised live (`scripts/jmp_rail_smoke.py`): the
 long-lived client connected, served its capability flags, and the Transport returned
 `accepted=True rail=jmp_cheogram receipt=None`.

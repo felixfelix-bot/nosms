@@ -2,7 +2,7 @@
   "probe": "jmp_cold_send",
   "jid": "hermes-jmp@jabber.fr",
   "to_masked": "+1******8875",
-  "to_raw": "+1******8875@cheogram.com",
+  "to_masked_jid": "+1******8875@cheogram.com",
   "msg_id": "ba7d0fd7000445c69745f915bad3b307",
   "body": "nosms cold-send probe 799a131b \u2014 unsolicited outbound, not a reply. 2026-10-05T00:24:27Z",
   "sent": true,
@@ -11,5 +11,5 @@
   "responses": [],
   "accepted": true,
   "note": "accepted == stanza left the client and no error/refusal stanza arrived within the wait window; NOT a delivery receipt",
-  "redaction_note": "destination masked in the published copy; raw value preserved at ~/reports/nosms/ outside version control"
+  "redaction_note": "the destination is masked with mask() (+1 plus the last four digits) in every field and in every stanza above \u2014 this file holds no un-masked destination. The un-redacted record is kept outside version control (--raw-out)."
 }

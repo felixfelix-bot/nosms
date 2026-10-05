@@ -14,7 +14,7 @@ import sqlite3
 import pytest
 
 from app.transports.errors import RailUnavailable
-from app.transports.jmp_link import SlixmppLink
+from app.transports.jmp_link import MAX_TERMINAL_RETRIES, SlixmppLink
 
 
 def _link(tmp_path, **kw):
@@ -44,6 +44,54 @@ def test_transient_disconnect_does_not_set_a_terminal_reason(tmp_path):
     link = _link(tmp_path)
     link._set_disconnected("connection_lost")
     assert link.down_reason is None            # it may still reconnect
+
+
+def test_send_timeout_raises_rail_unavailable_not_a_bare_timeout(tmp_path):
+    """The caught class must be concurrent.futures.TimeoutError (distinct from the
+    builtin before 3.11): a timeout that escaped would break the refund contract."""
+    import concurrent.futures
+
+    link = _link(tmp_path, send_timeout=0.01)
+    link._ready.set()
+    link._connected = True
+
+    class _Outbox:
+        def put_nowait(self, item):
+            raise AssertionError("must never be reached: the loop is broken")
+
+    class _Loop:
+        def call_soon_threadsafe(self, fn, *a):
+            # exactly what a closed/broken loop does inside fut.result()
+            raise concurrent.futures.TimeoutError()
+
+    link._loop = _Loop()
+    link._outbox = _Outbox()
+
+    with pytest.raises(RailUnavailable) as excinfo:
+        link.send_message("+1" + "5551230000@cheogram.com", "hi")
+    assert excinfo.value.reason == "connection_lost"
+
+
+def test_supervise_stops_after_repeated_terminal_failures(tmp_path):
+    """A terminal reason is sticky, so retrying forever is repeated auth attempts
+    against the server. The loop must give up after MAX_TERMINAL_RETRIES."""
+    import asyncio
+
+    link = _link(tmp_path)
+    cycles = []
+
+    async def fake_cycle():
+        cycles.append(1)
+        link._terminal_reason = "auth_failed"
+
+    link._cycle = fake_cycle
+    link.reconnect_min = 0.0
+    link.reconnect_max = 0.0
+    asyncio.run(link._supervise())
+
+    assert len(cycles) == MAX_TERMINAL_RETRIES
+    assert link._terminal_exhausted is True
+    assert link.is_connected() is False
 
 
 def test_inbox_table_is_created_and_written(tmp_path):

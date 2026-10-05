@@ -185,3 +185,81 @@ def test_empty_body_failure_is_not_degraded():
     assert res.accepted is False
     assert res.rail == "jmp_cheogram"               # the primary's own refusal
     assert smtp.sent == []
+
+
+# --- a reconnect window is not a dead rail ------------------------------------
+#
+# The degrade path exists for a rail that will not come back on its own. Diverting
+# every send during every reconnect would hand the load to the email rail's own
+# abuse surface, so only a *terminal* reason degrades.
+
+@pytest.mark.parametrize("reason", ["not_connected", "connection_lost"])
+def test_a_transient_reconnect_does_not_divert_traffic_to_email(reason):
+    smtp = RecordingSMTP()
+    link = FakeLink(fail=RailUnavailable(reason, "reconnecting"))
+    stack, jmp = _stack(link=link, smtp=smtp)
+
+    res = stack.send(US, "hello")
+
+    assert smtp.sent == []                          # the email rail was never used
+    assert stack.degraded_count == 0
+    assert res.accepted is False                    # refundable (escrow sees this)
+    assert res.refundable is True
+    assert res.detail == f"primary_transient:rail_unavailable:{reason}"
+    assert jmp.down_reason is None                  # and the rail is not marked down
+
+
+def test_a_transient_primary_still_gets_the_send_after_a_reconnect():
+    """The primary is preferred even while it is temporarily unavailable."""
+    link = FakeLink(connected=False)                # not connected, not terminal
+    stack, jmp = _stack(link=link)
+    assert stack.active_rail == "email_gateway"     # capabilities report the truth
+    link.connected = True
+    res = stack.send(US, "hello")
+    assert res.rail == "jmp_cheogram"               # and the send used the primary
+
+
+# --- the fallback failing must be visible, refundable, and loud ---------------
+
+class _FailingFallback:
+    name = "email_gateway"
+
+    def __init__(self, exc):
+        self.exc = exc
+        self.calls = 0
+
+    @property
+    def capabilities(self):
+        from app.transports.base import Capabilities
+        return Capabilities(available=True, best_effort=True,
+                            delivery_receipts=False, countries=["US", "CA"])
+
+    def send(self, dest, body, **kw):
+        self.calls += 1
+        raise self.exc
+
+
+@pytest.mark.parametrize("exc", [
+    RailUnavailable("not_connected", "fallback link down"),
+    smtplib.SMTPException("smtp exploded"),
+])
+def test_a_failing_fallback_is_refundable_not_a_raw_exception(exc):
+    primary = JmpCheogramTransport(FakeLink(fail=RailUnavailable("terminated")))
+    fallback = _FailingFallback(exc)
+    stack = FailoverTransport(primary, fallback, overrides={"carrier": "tmobile"})
+
+    res = stack.send(US, "hello")                   # must NOT raise
+
+    assert fallback.calls == 1
+    assert res.accepted is False
+    assert res.refundable is True                   # the escrow refunds on this
+    assert res.detail.startswith("all_rails_failed")
+    assert res.detail.split(" fallback=")[1]        # the cause is named
+
+
+def test_the_degrade_is_logged_loudly(caplog):
+    smtp = RecordingSMTP()
+    stack, _ = _stack(link=FakeLink(fail=RailUnavailable("terminated")), smtp=smtp)
+    with caplog.at_level("WARNING"):
+        stack.send(US, "hello")
+    assert any("nosms degrade" in r.message for r in caplog.records)

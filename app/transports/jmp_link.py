@@ -34,7 +34,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from concurrent.futures import Future
+from concurrent.futures import Future, TimeoutError as FuturesTimeoutError
 
 from .errors import RailUnavailable
 
@@ -46,6 +46,11 @@ DEFAULT_INBOX = "~/.hermes/profiles/manager/state/jmp_inbox.db"
 
 #: SASL/auth failures that mean "this account will never work again as-is".
 TERMINAL_REASONS = ("auth_failed", "terminated")
+
+#: A terminal reason is retried at most this many times before the supervise loop
+#: stops for good: a wrong credential will not fix itself, and hammering the
+#: server with re-auth attempts on a personal line is itself abusive-looking.
+MAX_TERMINAL_RETRIES = 3
 
 
 class SlixmppLink:
@@ -76,6 +81,7 @@ class SlixmppLink:
         self._ready = threading.Event()
         self._connected = False
         self._terminal_reason: str | None = None
+        self._terminal_exhausted = False
         self._stopping = False
         self._dump_lock = threading.Lock()
         if self.inbox_db:
@@ -163,13 +169,24 @@ class SlixmppLink:
         if not self.is_connected():
             raise RailUnavailable("not_connected", "link is reconnecting")
         fut: Future = Future()
-        self._loop.call_soon_threadsafe(
-            self._outbox.put_nowait, (to_jid, body, msg_id, fut))
         try:
+            self._loop.call_soon_threadsafe(
+                self._outbox.put_nowait, (to_jid, body, msg_id, fut))
             fut.result(timeout=self.send_timeout)
-        except TimeoutError as exc:            # pragma: no cover - needs a live link
+        except FuturesTimeoutError as exc:
+            # concurrent.futures.TimeoutError, NOT the builtin: they are only
+            # aliases from 3.11 on. Catching the wrong one would let a send
+            # timeout escape as an unexpected exception, breaking the
+            # "only raises RailUnavailable" contract the refund path relies on.
             raise RailUnavailable("connection_lost",
                                   "no acknowledgement before timeout") from exc
+        except RuntimeError as exc:
+            # ``call_soon_threadsafe`` on a loop that has been closed (the link
+            # was shut down while this send was in flight) raises RuntimeError.
+            # That is a rail-down condition too, not a raw crash: the caller must
+            # still be able to refund.
+            raise RailUnavailable("connection_lost",
+                                  f"loop unavailable: {exc}") from exc
 
     # --- background loop --------------------------------------------------
 
@@ -196,12 +213,23 @@ class SlixmppLink:
 
     async def _supervise(self) -> None:        # pragma: no cover - thread body
         backoff = self.reconnect_min
+        terminal_attempts = 0
         while not self._stopping:
             try:
                 await self._cycle()
                 backoff = self.reconnect_min
             except Exception:                  # noqa: BLE001 - never die silently
                 self._set_disconnected("connection_lost")
+            if self._terminal_reason in TERMINAL_REASONS:
+                # A wrong credential / terminated account will not fix itself.
+                # Retrying forever is repeated auth attempts against the server
+                # (abusive-looking on a personal line) and can never succeed, so
+                # give up loudly instead of hammering.
+                terminal_attempts += 1
+                if terminal_attempts >= MAX_TERMINAL_RETRIES:
+                    self._terminal_exhausted = True
+                    self._ready.set()
+                    return
             if self._stopping:
                 break
             await asyncio.sleep(backoff)
