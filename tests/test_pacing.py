@@ -8,10 +8,17 @@ the payer retries; no refund, because nothing was attempted.
 from __future__ import annotations
 
 import json
+import threading
+import time
 
 import pytest
 
-from app.transports.pacing import Pacer, PacingPolicy, load_pacing_policy
+from app.transports.pacing import (
+    Pacer,
+    PacingDecision,
+    PacingPolicy,
+    load_pacing_policy,
+)
 
 
 class Clock:
@@ -151,12 +158,39 @@ def test_missing_state_file_starts_a_fresh_day(tmp_path):
     assert pacer.check().sends_today == 0
 
 
-def test_corrupt_state_file_degrades_to_a_safe_blank(tmp_path):
+def test_corrupt_state_file_fails_closed_not_open(tmp_path):
+    """A corrupt counter must not silently restore a FULL daily cap.
+
+    The abuse surface is volume, so the safe direction after corruption is
+    "send nothing until an operator looks" — not "reset to zero and keep
+    going". The corrupt bytes are left in place (never overwritten by a blank
+    state) so the failure is visible and auditable.
+    """
     state = tmp_path / "jmp_pacing.json"
     state.write_text("{ this is not json")
     pacer = _pacer(state_path=str(state))
+
     d = pacer.check()
-    assert d.allowed is True and d.sends_today == 0
+    assert d.allowed is False
+    assert d.reason == "pacing_state_corrupt"
+
+    claim = pacer.claim()
+    assert claim.allowed is False
+    assert claim.reason == "pacing_state_corrupt"
+
+    # the corrupt file was NOT rewritten as a fresh (full-cap) day
+    assert state.read_text() == "{ this is not json"
+    # and the snapshot stays readable for /api/health
+    assert pacer.snapshot()["state"]["corrupt"] is True
+
+
+def test_a_corrupt_pacer_cannot_be_revived_by_a_new_day(tmp_path):
+    state = tmp_path / "jmp_pacing.json"
+    state.write_text("garbage")
+    pacer = _pacer(clock=Clock(0.0), state_path=str(state))
+    pacer._now = lambda: 86400.0 * 5          # five UTC days later
+    assert pacer.check().reason == "pacing_state_corrupt"
+    assert pacer.claim().allowed is False
 
 
 def test_snapshot_exposes_policy_state_and_decision():
@@ -166,3 +200,158 @@ def test_snapshot_exposes_policy_state_and_decision():
     assert snap["policy"]["daily_cap"] == 3
     assert snap["state"]["count"] == 1
     assert snap["decision"]["allowed"] is False
+
+
+# --- atomic claim / reserve (the check-then-act fix) --------------------------
+#
+# The daily cap and the jittered gap are the abuse-surface controls, so they must
+# be *reserved before* the blocking send, not counted after it returns. Two
+# claimants arriving at `daily_cap - 1` must not both send.
+
+def _contend(pacer, n=2, timeout=5.0):
+    """Run ``n`` concurrent claimants and return (granted, refused).
+
+    Deterministic, not probabilistic: a claimant that was granted a slot holds
+    it until *every* other claimant has recorded its attempt, so the losers
+    provably arrive while the slot is still reserved.
+    """
+    granted: list[PacingDecision] = []
+    refused: list[PacingDecision] = []
+    attempts = 0
+    cond = threading.Condition()
+
+    def worker():
+        nonlocal attempts
+        d = pacer.claim()
+        with cond:
+            attempts += 1
+            (granted if d.allowed else refused).append(d)
+            cond.notify_all()
+            if d.allowed:
+                deadline = time.monotonic() + timeout
+                while attempts < n and time.monotonic() < deadline:
+                    cond.wait(timeout)
+        if d.allowed:
+            pacer.release(d, accepted=True)
+
+    threads = [threading.Thread(target=worker) for _ in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=timeout + 5)
+    assert not any(t.is_alive() for t in threads), "a claimant deadlocked"
+    return granted, refused
+
+
+def test_concurrent_claimants_cannot_blow_the_daily_cap():
+    clock = Clock(0.0)
+    pacer = Pacer(PacingPolicy(daily_cap=2, min_gap_seconds=0, max_gap_seconds=0),
+                  now=clock, rng=FixedRng(0.0))
+    pacer.record_send()                       # count == daily_cap - 1
+
+    granted, refused = _contend(pacer, 2)
+
+    assert len(granted) == 1                  # exactly one send was attempted
+    assert len(refused) == 1
+    assert refused[0].reason == "daily_cap_reached"
+    assert pacer.snapshot()["state"]["count"] == 2   # the cap was never exceeded
+
+
+def test_concurrent_claimants_cannot_both_ride_the_jitter_gap():
+    """The other half of the same race: the gap, not the counter."""
+    clock = Clock(0.0)
+    pacer = Pacer(PacingPolicy(daily_cap=5, min_gap_seconds=60, max_gap_seconds=60),
+                  now=clock, rng=FixedRng(60.0))
+    pacer.record_send()                       # next_allowed_ts = 0 + 60
+    clock.t = 61.0                            # the gap has elapsed for BOTH
+
+    granted, refused = _contend(pacer, 2)
+
+    assert len(granted) == 1                  # the min-gap was not voided
+    assert len(refused) == 1
+    assert refused[0].reason == "send_in_flight"
+    assert pacer.snapshot()["state"]["count"] == 2
+
+
+def test_claim_reserves_immediately_so_check_agrees():
+    clock = Clock(0.0)
+    pacer = _pacer(clock=clock)
+    claim = pacer.claim()
+    assert claim.allowed is True
+    assert pacer.check().allowed is False     # slot reserved, not yet confirmed
+    assert pacer.snapshot()["state"]["pending"] is True
+
+
+def test_release_refunds_the_slot_when_the_send_did_not_leave():
+    clock = Clock(0.0)
+    pacer = _pacer(PacingPolicy(daily_cap=1, min_gap_seconds=0, max_gap_seconds=0),
+                   clock=clock)
+    claim = pacer.claim()
+    pacer.release(claim, accepted=False)      # refused / RailUnavailable
+
+    state = pacer.snapshot()["state"]
+    assert state["count"] == 0                # the slot came back
+    assert state["pending"] is False
+    assert pacer.check().allowed is True      # and the day is still usable
+
+
+def test_release_confirms_the_slot_and_starts_the_jitter_gap():
+    clock = Clock(0.0)
+    pacer = _pacer(clock=clock, rng=FixedRng(15.0))
+    claim = pacer.claim()
+    pacer.release(claim, accepted=True)
+
+    state = pacer.snapshot()["state"]
+    assert state["count"] == 1
+    assert state["pending"] is False
+    assert state["next_allowed_ts"] == 15.0   # the gap starts at release time
+    assert pacer.check().allowed is False
+
+
+def test_a_released_claim_is_idempotent_and_never_double_counts():
+    pacer = _pacer(clock=Clock(0.0))
+    claim = pacer.claim()
+    pacer.release(claim, accepted=True)
+    pacer.release(claim, accepted=True)       # a retry must not count twice
+    pacer.release(claim, accepted=False)      # nor refund after confirming
+    assert pacer.snapshot()["state"]["count"] == 1
+
+
+def test_release_rejects_a_forged_claim():
+    pacer = _pacer(clock=Clock(0.0))
+    forged = PacingDecision(allowed=True, reason="ok", claim_token="not-a-real-claim")
+    with pytest.raises(ValueError):
+        pacer.release(forged, accepted=True)
+    with pytest.raises(ValueError):
+        pacer.release(None, accepted=True)        # no token at all
+    assert pacer.snapshot()["state"]["count"] == 0
+
+
+def test_a_paced_claim_is_never_recorded_as_a_send():
+    clock = Clock(0.0)
+    pacer = _pacer(PacingPolicy(daily_cap=2, min_gap_seconds=0, max_gap_seconds=0),
+                   clock=clock)
+    pacer.record_send()
+    pacer.record_send()
+    claim = pacer.claim()
+    assert claim.allowed is False
+    assert (claim.reason, claim.sends_today) == ("daily_cap_reached", 2)
+    assert claim.retry_after > 0
+    assert pacer.snapshot()["state"]["count"] == 2   # never consumes a slot
+
+
+def test_claim_reservation_survives_a_crash_so_the_cap_is_not_available_twice(tmp_path):
+    """Reserve-now, count-after-send: a process that dies mid-send must not
+    hand the same slot to the next process."""
+    state = tmp_path / "jmp_pacing.json"
+    clock = Clock(0.0)
+    first = Pacer(PacingPolicy(daily_cap=1, min_gap_seconds=0, max_gap_seconds=0),
+                  state_path=str(state), now=clock, rng=FixedRng(0.0))
+    claim = first.claim()                     # reserved, then "crashed" - never released
+
+    second = Pacer(PacingPolicy(daily_cap=1, min_gap_seconds=0, max_gap_seconds=0),
+                   state_path=str(state), now=clock, rng=FixedRng(0.0))
+    assert second.check().allowed is False
+    assert second.claim().allowed is False
+    assert second.snapshot()["state"]["count"] == 1
+    assert first.snapshot()["state"]["pending"] is True

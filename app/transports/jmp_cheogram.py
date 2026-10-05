@@ -147,17 +147,24 @@ class JmpCheogramTransport:
                               detail=f"{RAIL_UNAVAILABLE_PREFIX}{self._down_reason}")
 
         if self.pacer is not None:
-            decision = self.pacer.check()
-            if not decision.allowed:
+            # Reserve the slot BEFORE the (blocking) send: check() then send()
+            # then record_send() is a check-then-act race a threadpool turns
+            # into a real cap violation. The claim persists the reservation, so
+            # a second concurrent caller is refused instead of waved through.
+            claim = self.pacer.claim()
+            if not claim.allowed:
                 # Never a failed SendResult: the message was not attempted, so
                 # charging-then-refunding would be wrong. The caller defers.
-                raise RailPaced(decision.reason, decision.retry_after_seconds,
-                                detail=f"personal-line pacing: {decision.reason}")
+                raise RailPaced(claim.reason, claim.retry_after_seconds,
+                                detail=f"personal-line pacing: {claim.reason}")
 
         msg_id = uuid.uuid4().hex
         try:
             self.link.send_message(f"{number}@cheogram.com", body, msg_id)
         except RailUnavailable as exc:
+            if self.pacer is not None:
+                # The message never left the client: give the slot back.
+                self.pacer.release(claim, accepted=False)
             if exc.reason in self._terminated_reasons:
                 self.mark_down(exc.reason)
             self.rejected_count += 1
@@ -166,7 +173,7 @@ class JmpCheogramTransport:
                               detail=f"{RAIL_UNAVAILABLE_PREFIX}{exc.reason}")
 
         if self.pacer is not None:
-            self.pacer.record_send()
+            self.pacer.release(claim, accepted=True)
         self.accepted_count += 1
         return SendResult(
             accepted=True, rail=self.name, best_effort=RAIL_BEST_EFFORT,

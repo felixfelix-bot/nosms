@@ -15,6 +15,8 @@ All offline: the XMPP link is a double, no network, no slixmpp.
 """
 from __future__ import annotations
 
+import threading
+
 import pytest
 
 from app.transports.base import SendResult, Transport
@@ -197,6 +199,101 @@ def test_pacing_counts_only_accepted_sends():
     rail = JmpCheogramTransport(link, pacer=pacer)
     assert rail.send(US, "nope").accepted is False
     assert pacer.snapshot()["state"]["count"] == 0
+
+
+class _HandshakeLink(FakeLink):
+    """A link that pauses inside ``send_message`` until the racing caller has
+    been decided — so whether the pacing held is *provable*, not a timing bet.
+
+    If exactly one caller got a slot, that caller is inside ``send_message``
+    when the other one is refused, and it sees ``loser_done``. If the pacing let
+    both through, nobody sets ``loser_done``, the winner times out and both
+    append → the assertion on ``len(link.sent)`` fails.
+    """
+
+    def __init__(self, timeout: float = 3.0):
+        super().__init__()
+        self.loser_done = threading.Event()
+        self.timeout = timeout
+
+    def send_message(self, to_jid, body, msg_id=None):
+        self.loser_done.wait(timeout=self.timeout)
+        self.sent.append((to_jid, body, msg_id))
+
+
+def _race_sends(rail, link, n=2):
+    """Two callers enter ``rail.send`` together; return the paced refusals."""
+    start = threading.Barrier(n)
+    errors: list[RailPaced] = []
+
+    def worker():
+        start.wait(timeout=5)
+        try:
+            rail.send(US, "concurrent")
+        except RailPaced as exc:
+            errors.append(exc)
+            link.loser_done.set()
+
+    threads = [threading.Thread(target=worker) for _ in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+    assert not any(t.is_alive() for t in threads), "a sender deadlocked"
+    return errors
+
+
+def test_concurrent_sends_cannot_blow_the_daily_cap():
+    """The BLOCKER from the cold review: check-then-act let two callers both
+    pass at ``daily_cap - 1``. The slot must be reserved *before* the send."""
+    clock = {"t": 1_000_000.0}
+    link = _HandshakeLink()
+    pacer = Pacer(PacingPolicy(daily_cap=2, min_gap_seconds=0, max_gap_seconds=0),
+                  now=lambda: clock["t"], rng=_FixedRng(0.0))
+    rail = JmpCheogramTransport(link, pacer=pacer)
+    assert rail.send(US, "warm-up").accepted is True     # count == cap - 1
+    assert len(link.sent) == 1
+
+    errors = _race_sends(rail, link)
+
+    assert len(link.sent) == 2                 # exactly ONE racer sent
+    assert len(errors) == 1                    # the other was paced, not failed
+    assert errors[0].reason == "daily_cap_reached"
+    assert pacer.snapshot()["state"]["count"] == 2       # cap never exceeded
+
+
+def test_concurrent_sends_cannot_both_ride_the_jitter_gap():
+    clock = {"t": 1_000_000.0}
+    link = _HandshakeLink()
+    pacer = Pacer(PacingPolicy(daily_cap=9, min_gap_seconds=60, max_gap_seconds=60),
+                  now=lambda: clock["t"], rng=_FixedRng(60.0))
+    rail = JmpCheogramTransport(link, pacer=pacer)
+    assert rail.send(US, "first").accepted is True
+    clock["t"] += 61.0                         # the gap has elapsed for BOTH
+
+    errors = _race_sends(rail, link)
+
+    assert len(link.sent) == 2                 # one racer, not two
+    assert len(errors) == 1
+    # the loser is refused because the winner's send is still in flight; the
+    # retry hint is the gap that send will arm, never 0 ("come back instantly").
+    assert errors[0].reason == "send_in_flight"
+    assert errors[0].retry_after == 60
+    assert pacer.snapshot()["state"]["count"] == 2
+
+
+def test_a_refused_send_releases_the_reserved_slot():
+    """A rail refusal must not consume the day's slot (the existing semantic)."""
+    clock = {"t": 0.0}
+    pacer = Pacer(PacingPolicy(daily_cap=5, min_gap_seconds=0, max_gap_seconds=0),
+                  now=lambda: clock["t"], rng=_FixedRng(0.0))
+    link = FakeLink(fail=RailUnavailable("not_connected"))
+    rail = JmpCheogramTransport(link, pacer=pacer)
+
+    assert rail.send(US, "down rail").accepted is False
+    state = pacer.snapshot()["state"]
+    assert state["count"] == 0                 # refunded
+    assert state["pending"] is False           # nothing left reserved
 
 
 # --- the result surface stays compatible -------------------------------------
