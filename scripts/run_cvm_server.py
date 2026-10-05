@@ -82,7 +82,14 @@ def build_transport(name: str):
     """
     if name in ("email", "email_gateway"):
         from app.transports import EmailGatewayTransport
-        return EmailGatewayTransport()
+        from app.transports.email_gateway import load_carrier_map
+        # The carrier for a handset is not derivable from the number, and a
+        # guessed gateway silently loses mail — so it is explicit config.
+        return EmailGatewayTransport(
+            smtp_host=os.environ.get("NOSMS_SMTP_HOST", "localhost"),
+            smtp_port=int(os.environ.get("NOSMS_SMTP_PORT", "25")),
+            sender=os.environ.get("NOSMS_SMTP_SENDER", "sms@orangesync.tech"),
+            carrier_map=load_carrier_map(os.environ.get("NOSMS_CARRIER_MAP")))
     if name in ("jmp", "jmp_cheogram"):
         try:
             from app.transports.jmp_cheogram import JmpCheogramTransport

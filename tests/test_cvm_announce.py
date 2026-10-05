@@ -33,6 +33,7 @@ from app.cvm_tools import CvmTools                                  # noqa: E402
 from app.escrow import EscrowStore                                  # noqa: E402
 from app.pricing import DEFAULT_PRICE_SATS                          # noqa: E402
 from app.transports import FakeTransport                            # noqa: E402
+from app.transports.email_gateway import load_carrier_map           # noqa: E402
 import scripts.run_cvm_server as runner                             # noqa: E402
 
 
@@ -156,3 +157,47 @@ def test_default_contract_url_is_absolute_and_ends_in_llms_txt():
     ctx = ContractContext()
     assert ctx.contract_url.startswith("https://")
     assert ctx.contract_url.endswith("llms.txt")
+
+
+# --- the email rail's carrier config is explicit, never guessed -------------
+
+def test_carrier_map_parses_config_and_normalises_the_number():
+    m = load_carrier_map('{"+1 810 294 4652": "T-Mobile"}')
+    assert m == {"+18102944652": "t-mobile"}
+
+
+@pytest.mark.parametrize("raw", [None, "", "not json", "[]", '"str"', "{bad"])
+def test_a_malformed_carrier_map_is_empty_not_a_crash(raw):
+    """An unknown carrier must stay `carrier_unknown` — a truthful refusal —
+    rather than taking down a service that moves money."""
+    assert load_carrier_map(raw) == {}
+
+
+def test_email_rail_uses_the_configured_carrier_for_a_destination(monkeypatch):
+    from app.transports.email_gateway import EmailGatewayTransport
+    sent = []
+    rail = EmailGatewayTransport(
+        carrier_map={"+18102944652": "tmobile"},
+        smtp_factory=lambda h, p: sent.append((h, p)) or _NullSMTP())
+    result = rail.send("+18102944652", "hi")
+    assert result.accepted is True
+    assert sent, "the rail must use the configured carrier gateway"
+
+
+def test_email_rail_still_refuses_an_unknown_carrier_rather_than_guessing():
+    from app.transports.email_gateway import EmailGatewayTransport, UnsupportedDestination
+    rail = EmailGatewayTransport(carrier_map={"+18102944652": "tmobile"})
+    with pytest.raises(UnsupportedDestination) as exc:
+        rail.send("+14155550100", "hi")
+    assert exc.value.reason == "carrier_unknown"
+
+
+class _NullSMTP:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def sendmail(self, *args, **kwargs):
+        return {}
