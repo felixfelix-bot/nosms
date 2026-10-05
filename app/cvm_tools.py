@@ -42,10 +42,12 @@ from .cvm import (
     SERVER_ABOUT,
     SERVER_NAME,
     SERVER_VERSION,
+    ToolError,
     mcp_tool_error,
     mcp_tool_result,
 )
 from .escrow import EscrowStore
+from .jmp_tools import JMP_TOOLS, TOOL_JMP_CREDENTIALS, TOOL_JMP_FUNDING, TOOL_JMP_STATUS
 from .pricing import (
     COUNTRIES,
     DEFAULT_PRICE_SATS,
@@ -61,14 +63,10 @@ from .pricing import (
 from .refunds import refund_all
 from .transports.base import Transport
 
-class ToolError(Exception):
-    """A refusal that must reach the caller as a visible MCP tool error."""
-
-    def __init__(self, reason: str, hint: str = "", **extra: Any):
-        super().__init__(reason)
-        self.reason = reason
-        self.hint = hint
-        self.extra = extra
+# `ToolError` is defined in app/cvm.py and re-exported here: the JMP tool surface
+# (app/jmp_tools.py) raises the same type, so the dispatch below has exactly one
+# refusal shape to catch. Imported above; kept importable from this module too.
+__all__ = ["CvmTools", "SendRecord", "ToolError", "is_rail_down"]
 
 
 #: tool names, in contract order.
@@ -81,7 +79,8 @@ TOOL_DOCS = "docs"
 DOCS_ALIASES = (TOOL_DOCS, "llms")
 DOCS_FULL_ALIASES = ("llms-full", "llms_full")
 
-FREE_TOOLS = (TOOL_STATUS, TOOL_PRICING, TOOL_CAPABILITIES, TOOL_DOCS, "llms")
+FREE_TOOLS = (TOOL_STATUS, TOOL_PRICING, TOOL_CAPABILITIES, TOOL_DOCS, "llms",
+              TOOL_JMP_STATUS, TOOL_JMP_FUNDING)
 
 
 def is_rail_down(result) -> bool:
@@ -139,7 +138,7 @@ class CvmTools:
                  owner_pubkeys: set[str] | None = None, *,
                  mint=None, escrow: EscrowStore | None = None,
                  contract: ContractContext | None = None,
-                 btc_usd: float | None = None):
+                 btc_usd: float | None = None, jmp=None):
         self.transport = transport
         self.docs = docs or {}
         self.owner_pubkeys = {p.lower() for p in (owner_pubkeys or set())}
@@ -148,6 +147,8 @@ class CvmTools:
         self.contract = contract or ContractContext()
         #: live BTC/USD for the quote. None = the documented default rate.
         self.btc_usd = btc_usd
+        #: the JMP capability (app/jmp_tools.py). None = the jmp.* tools refuse.
+        self.jmp = jmp
         #: quotes handed out and not yet consumed: quote_id -> {price, dest, at}
         self.quotes: dict[str, dict] = {}
         self.records: dict[str, SendRecord] = {}
@@ -464,6 +465,33 @@ class CvmTools:
              "description": "The llms.txt contract, verbatim (free). Alias: llms.",
              "inputSchema": {"type": "object",
                              "properties": {"name": {"type": "string"}}}},
+            {"name": TOOL_JMP_STATUS,
+             "description": ("JMP funding facts (free, read-only): the reserved "
+                             "number, the BTC deposit address and the minimum "
+                             "amount, with `source` honestly `cached` or "
+                             "`live-flow`. The number is a session-scoped "
+                             "reservation, not ownership. Operator-accepted ToS "
+                             "risk: JMP's terms restrict automation on this one "
+                             "personal line; not for bulk use."),
+             "inputSchema": {"type": "object", "properties": {}}},
+            {"name": TOOL_JMP_FUNDING,
+             "description": ("Drive the JMP/Cheogram ad-hoc flow to the funding "
+                             "step and return the same facts with "
+                             "`source: live-flow` (free). It CANNOT PAY: no card "
+                             "path and no payment form is ever submitted; a human "
+                             "sends the BTC. Operator-accepted ToS risk, single "
+                             "personal line only."),
+             "inputSchema": {"type": "object", "properties": {}}},
+            {"name": TOOL_JMP_CREDENTIALS,
+             "description": ("The JMP account's access material (PAID, tier "
+                             "financial; the caller's npub must be on the "
+                             "server's operator allow-list, checked BEFORE "
+                             "payment). Returns a NIP-44 v2 payload addressed to "
+                             "the caller — never the plaintext. Operator-accepted "
+                             "ToS risk, single personal line only."),
+             "inputSchema": {"type": "object",
+                             "properties": {"cashu_token": {"type": "string"},
+                                            "settlement_receipt": {"type": "string"}}}},
         ]
 
     def resource_list(self) -> list[dict]:
@@ -495,6 +523,46 @@ class CvmTools:
                 "docs": {"url": self.contract.contract_url, "tool": TOOL_DOCS,
                          "alias": "llms"}}
 
+    def _jmp_service(self):
+        if self.jmp is None:
+            raise ToolError(
+                "jmp_not_configured",
+                "This server has no JMP capability wired, so the jmp.* tools "
+                "refuse rather than answer from a stub.")
+        return self.jmp
+
+    def jmp_credentials(self, caller: str, args: dict | None = None) -> dict:
+        """Release the account credential — allow-list first, postage second.
+
+        The ORDER is the security property, not a detail: authorization is
+        checked before the payment path is even entered, so an unauthorised
+        caller cannot pay to obtain the secret, and the refusal carries no field
+        of it.
+
+        Tier: financial. Unlike `sms.send`, the owner-free rule is NOT extended
+        here — this tool's stated tier is financial for every caller, and the
+        price is advertised in the refusal.
+        """
+        args = args or {}
+        jmp = self._jmp_service()
+        # 1. authorization BEFORE anything that could move money
+        jmp.authorize_credentials(caller)
+        # 2. postage
+        price = int(getattr(jmp, "credentials_price", 0) or 0)
+        if price > 0:
+            if args.get("cashu_token"):
+                self._pay_with_token(args["cashu_token"], price, caller)
+            elif not args.get("settlement_receipt"):
+                raise ToolError(
+                    "payment_required",
+                    "jmp.credentials is financial tier: attach a Cashu token (or a "
+                    "settlement receipt). The operator allow-list is checked "
+                    "BEFORE payment, so only an authorised caller ever sees this.",
+                    cap=f"cap:tool:jmp.credentials:{price}:sats", price_sats=price,
+                    pmi="bitcoin-cashu", gating="explicit_gating")
+        # 3. build the encrypted payload (plaintext never leaves jmp_tools)
+        return jmp.credentials(caller)
+
     def call(self, tool: str, args: dict | None = None, caller: str = "") -> dict:
         """Dispatch one MCP tools/call and ALWAYS return a reply.
 
@@ -525,6 +593,12 @@ class CvmTools:
                 return {"content": [{"type": "text", "text": self.docs_tool(name)}]}
             if tool == "sms.quote":
                 return mcp_tool_result(self.quote(args.get("to", "")))
+            if tool == TOOL_JMP_STATUS:
+                return mcp_tool_result(self._jmp_service().status())
+            if tool == TOOL_JMP_FUNDING:
+                return mcp_tool_result(self._jmp_service().funding())
+            if tool == TOOL_JMP_CREDENTIALS:
+                return mcp_tool_result(self.jmp_credentials(caller, args))
             raise ToolError("unsupported method", f"Unknown tool {tool!r}.")
         except ToolError as exc:
             return mcp_tool_error(exc.reason, exc.hint, **exc.extra)

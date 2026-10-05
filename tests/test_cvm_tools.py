@@ -432,14 +432,23 @@ def test_server_announcement_advertises_the_contract_url_and_docs_tool():
     assert ann["docs"]["url"] == t.contract.contract_url
     assert ann["docs"]["tool"] == "docs"
     assert set(ann["tools"]) == {"sms.send", "sms.status", "sms.pricing",
-                                 "sms.capabilities", "docs"}
+                                 "sms.capabilities", "docs",
+                                 "jmp.status", "jmp.funding", "jmp.credentials"}
 
 
 # --- tool list -------------------------------------------------------------
 
 def test_tool_definitions_include_every_tool_the_contract_names():
+    """Every served tool is named here AND in both contract documents.
+
+    Extended with the JMP tools (jmp.status / jmp.funding / jmp.credentials):
+    their own behaviour is covered by tests/test_jmp_tools.py, and
+    tests/test_cvm_contract.py checks they are documented in llms.txt and
+    llms-full.txt.
+    """
     names = {t["name"] for t in tools().tool_definitions()}
-    assert names == {"sms.send", "sms.status", "sms.pricing", "sms.capabilities", "docs"}
+    assert names == {"sms.send", "sms.status", "sms.pricing", "sms.capabilities", "docs",
+                     "jmp.status", "jmp.funding", "jmp.credentials"}
 
 
 def test_every_free_tool_answers_without_payment():

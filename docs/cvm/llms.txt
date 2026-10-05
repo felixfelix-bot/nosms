@@ -28,6 +28,26 @@ The same two documents are exposed as MCP resources
 - `docs` (alias `llms`) — free. This contract.
 - `llms-full` — free. The full manual.
 
+### JMP account tools (the operator's own line)
+
+- `jmp.status` — free, read-only. The funding facts: the reserved number, the
+  BTC deposit address, the minimum amount, with `source` honestly `cached` or
+  `live-flow`. Never spends.
+- `jmp.funding` — free. Drives the JMP/Cheogram ad-hoc flow to the funding step
+  and returns the same payload with `source: live-flow`. It **cannot pay**: no
+  card path, no payment form is submitted — a human sends the BTC. Fails with
+  `rail_unavailable` rather than answering from cache.
+- `jmp.credentials` — **PAID** (tier: financial) and allow-listed. Returns the
+  account's access material as a NIP-44 v2 payload addressed to the caller's
+  npub — never the plaintext. The caller's pubkey must be on the server's
+  operator allow-list, and that check happens **before** payment.
+
+The number is a **session-scoped reservation**, not ownership: JMP holds the
+number for the session that selected it and the offer has changed between runs.
+Re-drive `jmp.funding` to confirm it. ToS: JMP restricts automated use of its
+personal rail; the operator accepted that risk for this one line — these tools
+are not a licence for bulk use.
+
 ## Pricing (sats)
 
 **Flat: 2900 sats per message, for every destination** — domestic and
@@ -83,8 +103,9 @@ Every refusal is a JSON-RPC `result` carrying `isError: true` and a body with:
 
 - `reason`: machine token — `payment_required`, `insufficient_funds`,
   `bad_destination`, `destination_unsupported`, `rail_not_configured`,
-  `transport_error`, `rail_unavailable`, `rail_paced`, `rate_limited`,
-  `owner_only`, `token_invalid`,
+  `jmp_not_configured`, `transport_error`, `rail_unavailable`, `rail_paced`,
+  `rate_limited`, `owner_only`, `credential_unavailable`,
+  `credentials_encryption_unconfigured`, `token_invalid`,
   `token_unsupported`, `token_empty`, `token_wrong_mint`,
   `token_already_spent`, `token_state_unknown`, `mint_error`,
   `mint_unreachable`, `not_found`, `unsupported method`.

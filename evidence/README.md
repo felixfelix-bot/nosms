@@ -1,3 +1,19 @@
+# evidence/
+
+Real output from the shipped code, committed so a reviewer does not have to take
+a claim on trust.
+
+| file | produced by | what it shows |
+|---|---|---|
+| `jmp-cvm-probe.json` | `python3 scripts/jmp_cvm_probe.py --out evidence/jmp-cvm-probe.json` | what the served JMP tools answer today: `jmp.status` returning the capture with `source: cached`, `jmp.funding` refusing with `rail_unavailable` (no live driver wired), and `jmp.credentials` refusing with `owner_only` plus the store precondition report (`store: openbao`, `present: false`) — the documented OpenBao blocker, from a real run. |
+| `cold-send-20261005T002427Z.json` | `scripts/jmp_cold_send_probe.py` | the exact outbound JMP/Cheogram stanza plus the response window; the destination is redacted by construction — details in the rail section below. |
+| `adapter-smoke-stdout.jsonl` | `scripts/jmp_rail_smoke.py` | the adapter's own long-lived link, run the way the service builds it — details below. |
+
+Nothing in this directory is hand-written: re-run the commands above and the files
+should be byte-identical apart from the timestamps the tool returns.
+
+---
+
 # Evidence — JMP/Cheogram rail cold-send proof (2026-10-05)
 
 Task: **t_ac001750** (nosms M5-rail). This directory is the primary-source record for the
