@@ -17,6 +17,20 @@ from app.transports.telnyx import SmsGatewayNotFound, TelnyxTransport, load_sms_
 
 SMS_GATEWAY_PATH = pathlib.Path.home() / "repos" / "sms-gateway"
 
+#: The provider package this adapter wraps is NOT a dependency of this repo: it
+#: is imported by path from a sibling checkout (`NOSMS_SMS_GATEWAY_PATH`). On a
+#: box that has that checkout these tests run for real; where it is absent — CI,
+#: or any fresh clone — they cannot run at all, because there is no package to
+#: import. Skipping is the honest outcome; failing would report "the suite is
+#: broken" for a missing external checkout, which is what this guard fixes (the
+#: three tests that import the package failed on the runner that way).
+sms_gateway_available = SMS_GATEWAY_PATH.is_dir()
+requires_sms_gateway = pytest.mark.skipif(
+    not sms_gateway_available,
+    reason=(f"sms-gateway checkout not present at {SMS_GATEWAY_PATH}; the "
+            "adapter imports it by path and this repo does not vendor it"),
+)
+
 
 class FakeProvider:
     """Duck-typed stand-in for sms_gateway.providers.telnyx.TelnyxProvider."""
@@ -119,6 +133,7 @@ class _StubClient:
 
 # --- real construction from config ------------------------------------------
 
+@requires_sms_gateway
 def test_load_sms_gateway_imports_the_package_by_path():
     mod = load_sms_gateway(str(SMS_GATEWAY_PATH))
     assert hasattr(mod, "TelnyxProvider")
@@ -131,6 +146,7 @@ def test_load_sms_gateway_explains_a_missing_path(tmp_path):
     assert "sms-gateway" in str(e.value)
 
 
+@requires_sms_gateway
 def test_from_config_builds_a_real_provider_and_reports_unconfigured(monkeypatch):
     monkeypatch.delenv("TELNYX_API_KEY", raising=False)
     monkeypatch.delenv("TELNYX_FROM_NUMBER", raising=False)
@@ -141,6 +157,7 @@ def test_from_config_builds_a_real_provider_and_reports_unconfigured(monkeypatch
 
 
 @pytest.mark.anyio
+@requires_sms_gateway
 async def test_unconfigured_adapter_refuses_to_send_instead_of_failing_late():
     t = TelnyxTransport.from_config(sms_gateway_path=str(SMS_GATEWAY_PATH))
     res = await t.send("+15551234567", "hello")
