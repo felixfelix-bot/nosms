@@ -1,0 +1,15 @@
+{
+  "probe": "jmp_cold_send",
+  "jid": "hermes-jmp@jabber.fr",
+  "to_masked": "+1******8875",
+  "to_raw": "+1******8875@cheogram.com",
+  "msg_id": "ba7d0fd7000445c69745f915bad3b307",
+  "body": "nosms cold-send probe 799a131b \u2014 unsolicited outbound, not a reply. 2026-10-05T00:24:27Z",
+  "sent": true,
+  "sent_at": 1791159867.8865244,
+  "outbound_stanza_xml": "<message xmlns=\"jabber:client\" id=\"ba7d0fd7000445c69745f915bad3b307\" xml:lang=\"en\" to=\"+1******8875@cheogram.com\" type=\"chat\"><body>nosms cold-send probe 799a131b \u2014 unsolicited outbound, not a reply. 2026-10-05T00:24:27Z</body></message>",
+  "responses": [],
+  "accepted": true,
+  "note": "accepted == stanza left the client and no error/refusal stanza arrived within the wait window; NOT a delivery receipt",
+  "redaction_note": "destination masked in the published copy; raw value preserved at ~/reports/nosms/ outside version control"
+}
