@@ -81,6 +81,62 @@ knowledge: everything required to use the service is reachable from the server.
 
 Returns this manual.
 
+### `jmp.status` — free, read-only
+
+The JMP funding facts, so nobody has to be handed a pasted address again:
+
+```json
+{"number": "(810) 258-3253", "number_state": "reserved",
+ "btc_address": "bc1qnq4mm4sh2vm8mjh2fa7yxcqn2ymz637mudpkfk",
+ "amount_btc": "0.000244", "amount_usd_min": "20.00",
+ "balance_usd": "0.00", "activation_state": "unfunded",
+ "as_of": "2026-09-26T21:20:00Z", "source": "cached",
+ "number_note": "...", "number_history": [...], "provenance": {...}}
+```
+
+- `source` is `cached` when the values came from the committed capture (and
+  `as_of` is then the capture time, not "now") and `live-flow` only when this
+  run really drove the flow. The two are never conflated.
+- `number_state` names the reservation for what it is: **session-scoped**. JMP
+  holds the number for the session that selected it and the offer changes
+  between runs; `number_history` carries every selection observed live, so the
+  caveat is data, not a footnote.
+- Read-only: roster + ad-hoc command discovery + the register command's form
+  text, all IQ `get`s. It never reserves a number and cannot spend.
+- A failed read-only probe is recorded in the payload (`live_attempt.ok: false`)
+  and the facts stay labelled `cached`.
+
+### `jmp.funding` — free, drives the flow
+
+Drives the `cheogram.com` ad-hoc command (`jabber:iq:register`) through number
+selection to the funding step and returns the same payload with
+`source: live-flow`. The flow selects the **bitcoin** activation method — which
+is what makes the bot print the deposit address and the minimum — and stops
+there. It is **incapable of spending**, and that is checked rather than claimed:
+the driver asserts, on the outgoing transcript, that no payment-shaped stanza
+was emitted (no card method, no card form, no out-of-band payment URL). A caller
+that cannot be driven gets `rail_unavailable`; cached values are never returned
+in place of a live-flow answer.
+
+### `jmp.credentials` — PAID (tier: financial), allow-listed
+
+The account's access material: `{jid, secret, secret_kind, number, issued_at,
+rotate_by, revoke_hint}`, **NIP-44 v2 encrypted to the requesting npub**.
+
+- The allow-list is checked **before** payment: an unauthorised caller is refused
+  with `owner_only` and the mint is never touched, so nobody can pay their way in.
+- The response carries only the ciphertext (`ciphertext`, `enc`, `to`,
+  `issued_at`, `rotate_by`, `revoke_hint`, and a `preconditions` report). The
+  plaintext is never on the wire: a CVM response is gift-wrapped over relays and
+  relays retain what they carry, so the operator's own key must be the only thing
+  that can open it.
+- The credential is read from the fleet store (OpenBao via `fleet_secret.py`).
+  It is never read from a plaintext file, and a missing credential fails closed
+  with `credential_unavailable` naming the store and the secret — this node has
+  no write capability on the vault, so populating it is an operator action.
+- `rotate_by` (issue + 90 days) and `revoke_hint` travel with every release; a
+  credential with no rotation story is a liability, so both are mandatory.
+
 ## 4. Payment (CEP-8)
 
 - Gating: `explicit_gating`. An unpaid `sms.send` is answered with a visible

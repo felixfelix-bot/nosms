@@ -1,0 +1,90 @@
+{
+  "jmp.credentials": {
+    "allow_list_size": 0,
+    "isError": true,
+    "live_driver_wired": false,
+    "preconditions": {
+      "jmp/account": {
+        "detail": "fleet_secret rc=1: fleet_secret: no OpenBao token (set OPENBAO_TOKEN / OPENBAO_TOKEN_FILE)",
+        "fields": [],
+        "name": "jmp/account",
+        "present": false,
+        "store": "openbao"
+      },
+      "jmp/funding": {
+        "detail": "fleet_secret rc=1: fleet_secret: no OpenBao token (set OPENBAO_TOKEN / OPENBAO_TOKEN_FILE)",
+        "fields": [],
+        "name": "jmp/funding",
+        "present": false,
+        "store": "openbao"
+      },
+      "jmp/number": {
+        "detail": "fleet_secret rc=1: fleet_secret: no OpenBao token (set OPENBAO_TOKEN / OPENBAO_TOKEN_FILE)",
+        "fields": [],
+        "name": "jmp/number",
+        "present": false,
+        "store": "openbao"
+      }
+    },
+    "refusal": {
+      "hint": "jmp.credentials serves the account credential only to an allow-listed operator npub, and it checks the list before any payment is taken. This caller is not on the list.",
+      "reason": "owner_only"
+    },
+    "status_probe_wired": false
+  },
+  "jmp.funding": {
+    "isError": true,
+    "payload": {
+      "hint": "No live JMP driver is configured on this server, so the flow cannot be driven. Use jmp.status for the cached record (it says so) or wire NOSMS_JMP_LIVE with the account credential present.",
+      "reason": "rail_unavailable"
+    }
+  },
+  "jmp.status": {
+    "isError": false,
+    "payload": {
+      "activation_note": "After payment is complete, your number will be activated for inbound calls and texts. Calling out, or sending a text, will often be restricted until you receive at least one text from a person or port in a number.",
+      "activation_state": "unfunded",
+      "amount_btc": "0.000244",
+      "amount_usd_min": "20.00",
+      "as_of": "2026-09-26T21:20:00Z",
+      "balance_usd": "0.00",
+      "btc_address": "bc1qnq4mm4sh2vm8mjh2fa7yxcqn2ymz637mudpkfk",
+      "number": "(810) 258-3253",
+      "number_history": [
+        {
+          "evidence": "jmp-register-transcript-2026-09-26.txt:38",
+          "number": "(810) 258-3233",
+          "selected": true,
+          "session": "run 1 (registration transcript)"
+        },
+        {
+          "evidence": "jmp-register-payment-2026-09-26.txt:34",
+          "number": "(810) 202-2913",
+          "selected": true,
+          "session": "run 2, session A"
+        },
+        {
+          "evidence": "jmp-register-payment-2026-09-26.txt:101",
+          "number": "(810) 258-3253",
+          "selected": true,
+          "session": "run 2, session B (the one that printed the deposit address)"
+        }
+      ],
+      "number_note": "Session-scoped reservation, not ownership: JMP numbers are held for the session that selected them and the offer changes between runs (three live sessions observed three different option-1 numbers). Re-drive the flow to confirm the current one before relying on it.",
+      "number_state": "reserved",
+      "provenance": {
+        "captured_at": "2026-09-26T21:20:00Z",
+        "evidence": [
+          "soveng-archive@3a179dc:cashu-sms/evidence/jmp-register-payment-2026-09-26.txt",
+          "soveng-archive@3a179dc:cashu-sms/evidence/jmp-register-transcript-2026-09-26.txt"
+        ],
+        "mode": "cached",
+        "note": "Cached from a live capture; not observed by this run. Re-drive with jmp.funding for a live-flow reading."
+      },
+      "source": "cached",
+      "tos": "JMP's terms restrict automated use of its personal rail. The operator has explicitly accepted that risk for their own single line ('lets take the risk.', 2026-09-26). This capability is scoped to that one account: it is not a licence for bulk or resale use, and it never widens itself."
+    }
+  },
+  "note": "Real run of the served tool path. No live XMPP drive was performed here (that is jmp.funding, which refuses when no credential is present), and no secret appears in this file.",
+  "probe": "scripts/jmp_cvm_probe.py"
+}
