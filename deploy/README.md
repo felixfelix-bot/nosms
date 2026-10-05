@@ -127,3 +127,27 @@ Two network-touching checks are deliberately *not* part of the suite:
 /opt/nosms/.venv/bin/pip install httpx coincurve    # already implied by requirements-dev.txt
 /opt/nosms/.venv/bin/python scripts/live_probe.py http://127.0.0.1:8088
 ```
+
+## Local verification — the entrypoint is `server:app`, not `main:app`
+
+Two things about this repo trip automated verifiers (both measured 2026-10-05):
+
+- **`uvicorn server:app`** is the ASGI entrypoint. `hermes verify`'s detector
+  guesses `uvicorn main:app`, which does not exist here.
+- **Readiness is `/api/health`.** The detector guesses `/`, which is a 404 — the
+  service only serves `/api/health`, `/api/send` and `/llms.txt`.
+
+```sh
+python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+PATH="$PWD/.venv/bin:$PATH" hermes verify --json --skip-start   # bootstrap + test
+PATH="$PWD/.venv/bin:$PATH" uvicorn server:app --port 8123      # then:
+curl -sS http://127.0.0.1:8123/api/health                       # {"ok":true,...}
+```
+
+To have `hermes verify` boot it correctly too, pin a host-local
+`.hermes/environment.json` with `"start": "uvicorn server:app --host 127.0.0.1
+--port 8000"` and `"readinessPath": "/api/health"`.
+
+The JMP rail's own environment variables (`NOSMS_JMP_*`, used when
+`NOSMS_TRANSPORT=jmp_cheogram`) are documented in `docs/jmp-rail.md`.
+

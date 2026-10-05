@@ -20,6 +20,12 @@ import smtplib
 from email.message import EmailMessage
 
 from .base import Capabilities, SendResult
+from .errors import UnsupportedDestination   # re-exported: rail-agnostic now
+from .nanp import is_us_ca
+
+
+# `UnsupportedDestination` is imported from `.errors` above and re-exported here
+# so the historical import path keeps working and one class is caught everywhere.
 
 #: carrier id -> the gateway domains carriers actually accept mail on.
 #: Only domains verified to have MX records belong here.
@@ -60,13 +66,8 @@ def load_carrier_map(raw: str | None) -> dict[str, str]:
     return {_e164(str(k)): str(v).strip().lower() for k, v in parsed.items()}
 
 
-class UnsupportedDestination(Exception):
-    """Raised when the rail cannot serve a destination, with a machine reason."""
-
-    def __init__(self, reason: str, detail: str = ""):
-        super().__init__(f"{reason}: {detail}" if detail else reason)
-        self.reason = reason
-        self.detail = detail
+# `UnsupportedDestination` is imported from `.errors` above and re-exported here
+# so the historical import path keeps working and one class is caught everywhere.
 
 
 def _e164(dest: str) -> str:
@@ -109,7 +110,7 @@ class EmailGatewayTransport:
              **kwargs) -> SendResult:
         number = _e164(dest)
         # country gate FIRST: a non-US/CA destination is never a carrier problem
-        if not number.startswith("+1") or len(number) != 12:
+        if not is_us_ca(number):
             raise UnsupportedDestination("destination_unsupported",
                                          "rail covers US/CA (+1) only")
         if not body:
