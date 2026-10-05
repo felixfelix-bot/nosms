@@ -54,13 +54,14 @@ def test_unsigned_send_is_401_auth_missing_with_headers(client):
     assert r.headers["x-hint"]
 
 
-def test_signed_send_reaches_handler(client):
+def test_signed_send_reaches_the_send_path(client):
     header = nip98_header(url=f"{BASE_URL}/api/send", method="POST")
-    r = client.post("/api/send", json={"to": "+15551234567", "body": "hi"},
+    r = client.post("/api/send", json={"to": "+15555550100", "body": "hi"},
                     headers={"Authorization": header})
-    # the send path is the sibling card; reaching the handler is the point
-    assert r.status_code == 501
-    assert r.headers["x-reason"] == "send_not_implemented"
+    # M1b: the send path is implemented. A signed request with no postage token
+    # is refused by the payment layer — never 501, never an auth failure.
+    assert r.status_code != 501
+    assert r.headers["x-reason"] == "token_missing"
     assert r.headers["x-hint"]
 
 
@@ -89,7 +90,8 @@ def test_send_rejects_replayed_event(client):
     header = nip98_header(url=f"{BASE_URL}/api/send", method="POST")
     first = client.post("/api/send", json={}, headers={"Authorization": header})
     second = client.post("/api/send", json={}, headers={"Authorization": header})
-    assert first.status_code == 501          # reached handler
+    assert first.status_code == 400          # reached the handler (no cashu token)
+    assert first.headers["x-reason"] == "token_missing"
     assert second.status_code == 401
     assert second.headers["x-reason"] == "auth_replayed"
 

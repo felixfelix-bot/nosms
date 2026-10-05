@@ -44,6 +44,27 @@ CARRIER_GATEWAYS["att"] = ["mms.att.net"] if False else []
 
 MAX_BODY_CHARS = 140 * 4          # carriers truncate; callers must know
 
+#: destination -> carrier, for gateways that are NOT derivable from the number
+#: itself. Kept as configuration (env `NOSMS_CARRIER_MAP='{"+14155550100":
+#: "tmobile"}'`), never guessed: a wrong gateway means silent loss, so an
+#: unknown carrier stays `carrier_unknown` rather than being invented.
+
+
+def load_carrier_map(raw: str | None) -> dict[str, str]:
+    """Parse the `NOSMS_CARRIER_MAP` JSON object. Never raises: a malformed map
+    means no carrier is known, which is exactly `carrier_unknown` — a truthful
+    answer — rather than a crash on a service that moves money."""
+    if not raw:
+        return {}
+    import json as _json
+    try:
+        parsed = _json.loads(raw)
+    except ValueError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {_e164(str(k)): str(v).strip().lower() for k, v in parsed.items()}
+
 
 # `UnsupportedDestination` is imported from `.errors` above and re-exported here
 # so the historical import path keeps working and one class is caught everywhere.
@@ -58,10 +79,14 @@ class EmailGatewayTransport:
     name = "email_gateway"
 
     def __init__(self, smtp_host: str = "localhost", smtp_port: int = 25,
-                 sender: str = "sms@orangesync.tech", smtp_factory=None):
+                 sender: str = "sms@orangesync.tech", smtp_factory=None,
+                 carrier_map: dict[str, str] | None = None):
         self.smtp_host = smtp_host
         self.smtp_port = smtp_port
         self.sender = sender
+        #: optional destination -> carrier config (NOSMS_CARRIER_MAP). Absent
+        #: means `carrier_unknown` for a +1 destination, which is honest.
+        self.carrier_map = carrier_map or {}
         self._smtp_factory = smtp_factory or (
             lambda host, port: smtplib.SMTP(host, port, timeout=30))
 
@@ -71,6 +96,7 @@ class EmailGatewayTransport:
                             delivery_receipts=False, countries=["US", "CA"])
 
     def _gateway(self, number: str, carrier: str | None) -> str:
+        carrier = carrier or self.carrier_map.get(number)
         if not carrier:
             raise UnsupportedDestination("carrier_unknown",
                                          "recipient carrier required")

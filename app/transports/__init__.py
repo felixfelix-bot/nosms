@@ -4,6 +4,7 @@ Rails
 -----
 * :class:`FakeTransport` — deterministic double (tests only, never best-effort)
 * :class:`EmailGatewayTransport` — carrier email-to-SMS (rail #3)
+* :class:`TelnyxTransport` — the Telnyx SMS gateway (M1b); pollable
 * :class:`JmpCheogramTransport` — the operator's JMP/Cheogram line (ADR-0002)
 
 Composition
@@ -15,25 +16,30 @@ Entry point
 -----------
 :func:`build_transport` is the single place the service chooses a rail from
 configuration; capability flags always come from the rail that is actually
-serving.
+serving. (The HTTP service has its own ``app.main.build_transport(cfg)`` for the
+Telnyx/escrow path; both are kept because they serve different entry points.)
 """
 from __future__ import annotations
 
 import os
 
-from .base import Capabilities, SendResult, Transport
+from .base import (Capabilities, Pollable, SendResult, Transport, TransportStatus,
+                   maybe_await, normalize_status)
 from .email_gateway import EmailGatewayTransport
 from .errors import RailPaced, RailUnavailable, UnsupportedDestination
 from .failover import FailoverTransport
 from .fake import FakeTransport
 from .jmp_cheogram import JmpCheogramTransport, JmpLink, is_rail_down
 from .pacing import Pacer, PacingDecision, PacingPolicy, load_pacing_policy
+from .telnyx import SmsGatewayNotFound, TelnyxTransport, load_sms_gateway
 
 __all__ = [
-    "Capabilities", "SendResult", "Transport",
+    "Capabilities", "SendResult", "Transport", "Pollable", "TransportStatus",
+    "maybe_await", "normalize_status",
     "EmailGatewayTransport", "UnsupportedDestination",
     "RailUnavailable", "RailPaced",
     "FakeTransport",
+    "TelnyxTransport", "SmsGatewayNotFound", "load_sms_gateway",
     "JmpCheogramTransport", "JmpLink", "is_rail_down",
     "FailoverTransport",
     "Pacer", "PacingPolicy", "PacingDecision", "load_pacing_policy",
