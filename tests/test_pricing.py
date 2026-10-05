@@ -35,7 +35,7 @@ from app.pricing import (
 # --- the price is flat for every destination --------------------------------
 
 @pytest.mark.parametrize("dest", [
-    "+14155550100", "+1 415 555 0100", "+18102944652",   # domestic
+    "+14155550100", "+1 415 555 0100", "+14155550100",   # domestic
     "+4917012345678", "+447700900123", "+351912345678",  # international
     "+919876543210", "+358401234567", "+999123456789",   # incl. unknown prefix
 ])

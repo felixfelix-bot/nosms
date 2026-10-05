@@ -21,7 +21,7 @@ The same two documents are exposed as MCP resources
 
 ## Tools
 
-- `sms.send(to, body)` — **PAID**. `to` is E.164 (`+18102944652`).
+- `sms.send(to, body)` — **PAID**. `to` is E.164 (`+14155550100`).
 - `sms.status(id)` — free. Returns the send record.
 - `sms.pricing` — free. Live price in sats.
 - `sms.capabilities` — free. Rail name + capability flags.

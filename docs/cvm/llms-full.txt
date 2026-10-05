@@ -30,7 +30,7 @@ napplet. That is exactly why the napplet wraps the CVM.
 
 ### `sms.send(to, body, cashu_token?, settlement_receipt?)` — PAID
 
-- `to` — E.164 destination (`+18102944652`). Formatting is stripped; a value with
+- `to` — E.164 destination (`+14155550100`). Formatting is stripped; a value with
   no digits, or too short to be a phone number, is `bad_destination`.
 - `body` — the message text (non-empty).
 - `cashu_token` — the ecash, in `cashuA…` (v3) or `cashuB…` (v4) encoding. The

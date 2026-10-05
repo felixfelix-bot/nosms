@@ -39,7 +39,7 @@ CARRIER_GATEWAYS["att"] = ["mms.att.net"] if False else []
 MAX_BODY_CHARS = 140 * 4          # carriers truncate; callers must know
 
 #: destination -> carrier, for gateways that are NOT derivable from the number
-#: itself. Kept as configuration (env `NOSMS_CARRIER_MAP='{"+18102944652":
+#: itself. Kept as configuration (env `NOSMS_CARRIER_MAP='{"+14155550100":
 #: "tmobile"}'`), never guessed: a wrong gateway means silent loss, so an
 #: unknown carrier stays `carrier_unknown` rather than being invented.
 

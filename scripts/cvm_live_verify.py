@@ -22,7 +22,7 @@ Steps, each reported with the elapsed time and the raw reply:
 
 Usage
 -----
-    python3 scripts/cvm_live_verify.py --server-npub npub1... [--to +1...]
+    python3 scripts/cvm_live_verify.py --server-npub npub1... --to +1...
     python3 scripts/cvm_live_verify.py --server-npub npub1... --no-pay
 
 Exit code 0 only if every step produced the expected reply. Prints a JSON
@@ -259,7 +259,9 @@ def main() -> int:
     ap.add_argument("--server-npub", required=True)
     ap.add_argument("--relays", nargs="+", default=list(WORKING_RELAYS))
     ap.add_argument("--key-file", default=str(REPO / ".cvm-client.nsec"))
-    ap.add_argument("--to", default="+18102944652")
+    # No default destination: the live target is a real handset, and this repo
+    # is public, so the operator passes --to at run time.
+    ap.add_argument("--to", required=True)
     ap.add_argument("--body", default="nosms CVM live verification")
     ap.add_argument("--mint", default=os.environ.get("NOSMS_MINT_URL",
                                                      "https://testnut.cashu.space"))
