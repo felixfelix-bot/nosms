@@ -19,8 +19,15 @@ import './styles.css';
 
 type StatusKind = 'idle' | 'ok' | 'warn' | 'error';
 
-const DEFAULT_SERVER_PUBKEY = '__NOSMS_CVM_PUBKEY__';
-const DEFAULT_SERVER_RELAYS = ['wss://relay.primal.net', 'wss://nos.lol'];
+// Build-time pinned identity and relays (vite `define`). Empty string means "no
+// pin": the napplet then resolves the server by discovery alone.
+declare const __NOSMS_CVM_PUBKEY__: string;
+declare const __NOSMS_CVM_RELAYS__: string;
+
+const DEFAULT_SERVER_PUBKEY = __NOSMS_CVM_PUBKEY__ || '__NOSMS_CVM_PUBKEY__';
+const DEFAULT_SERVER_RELAYS = (__NOSMS_CVM_RELAYS__
+  ? __NOSMS_CVM_RELAYS__.split(/[\s,]+/).filter(Boolean)
+  : ['wss://relay.primal.net', 'wss://nos.lol']);
 
 const elements = {
   status: requireElement<HTMLOutputElement>('#status'),
@@ -154,7 +161,18 @@ function contractDocument(): string {
   ].join('\n');
 }
 
-/** Read the server's live facts. Every step is fallible and degrades visibly. */
+/** True when the build pinned a server identity (direct resolution). */
+function hasPinnedServer(): boolean {
+  return Boolean(DEFAULT_SERVER_PUBKEY) && !DEFAULT_SERVER_PUBKEY.startsWith('__');
+}
+
+/**
+ * Read the server's live facts. Every step is fallible and degrades visibly.
+ *
+ * Resolution is shown as the card asks: FIRST the direct path (the pinned npub,
+ * if the build has one), then the public path (discovery, CEP-6 announcements).
+ * Whichever answered first is the one reported.
+ */
 async function connect(): Promise<void> {
   const availability = cvmAvailability();
   if (!availability.domain) {
@@ -164,19 +182,39 @@ async function connect(): Promise<void> {
   }
   setStatus('idle', 'Discovering servers');
 
-  if (!server) {
-    const discovery = await discoverServers('sms');
+  const resolution: {
+    direct: { pubkey: string; relays: string[] } | null;
+    discovered: Array<{ pubkey: string; name?: string }>;
+    chosen: 'direct' | 'discovery' | 'none';
+    error?: string;
+  } = { direct: null, discovered: [], chosen: 'none' };
+
+  // --- path 1: direct, by the pinned npub --------------------------------
+  if (hasPinnedServer()) {
+    resolution.direct = { pubkey: DEFAULT_SERVER_PUBKEY, relays: DEFAULT_SERVER_RELAYS };
+  }
+
+  // --- path 2: public, via the CEP-6 announcement cache -------------------
+  const discovery = await discoverServers('sms');
+  resolution.discovered = discovery.servers.map((s) => ({ pubkey: s.pubkey, name: s.name }));
+  if (discovery.error) resolution.error = discovery.error;
+
+  if (resolution.direct) {
+    // The pin wins: it is the identity this build was made for. But never blind
+    // to discovery — say so when the relays disagree.
+    server = { pubkey: DEFAULT_SERVER_PUBKEY, relays: DEFAULT_SERVER_RELAYS, name: 'nosms' };
+    resolution.chosen = 'direct';
+  } else {
     const found = discovery.servers[0];
     if (found?.pubkey) {
       server = { pubkey: found.pubkey, relays: found.relays ?? [], name: found.name };
-    } else if (DEFAULT_SERVER_PUBKEY && !DEFAULT_SERVER_PUBKEY.startsWith('__')) {
-      server = { pubkey: DEFAULT_SERVER_PUBKEY, relays: DEFAULT_SERVER_RELAYS, name: 'nosms' };
+      resolution.chosen = 'discovery';
     } else {
       renderServer();
       setStatus('warn', 'No nosms server found');
       setOutput(
         [
-          'Discovery found no server with an `sms` capability.',
+          'Discovery found no server with an `sms` capability, and this build pins none.',
           discovery.error ? `discovery error: ${discovery.error}` : '',
           `cvm methods visible: ${availability.methods.join(', ') || 'none'}`,
         ].filter(Boolean).join('\n'),
@@ -203,6 +241,12 @@ async function connect(): Promise<void> {
 
   setStatus(caps.ok || pricing.ok ? 'ok' : 'warn', caps.ok ? 'Contract read from server' : 'Server did not answer');
   setOutput({
+    resolved_by: resolution.chosen,
+    direct: resolution.direct,
+    discovery: {
+      servers: resolution.discovered,
+      error: resolution.error ?? null,
+    },
     server,
     cvm: availability,
     capabilities: caps.ok ? caps.value : { error: caps.error },
@@ -336,7 +380,7 @@ renderCapabilities(null);
 renderServer();
 subscribeToTheme();
 
-if (DEFAULT_SERVER_PUBKEY && !DEFAULT_SERVER_PUBKEY.startsWith('__')) {
+if (hasPinnedServer()) {
   server = { pubkey: DEFAULT_SERVER_PUBKEY, relays: DEFAULT_SERVER_RELAYS, name: 'nosms' };
   renderServer();
 }
