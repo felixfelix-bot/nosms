@@ -53,6 +53,12 @@ class Config:
     sms_gateway_path: str = "~/repos/sms-gateway"
     #: longest message body accepted by the HTTP surface.
     max_body_chars: int = 640
+    #: flat postage for one message, per ADR-0002 (the rugpull-risk premium).
+    #: The formula and the walk-down live in app/pricing.py; this is the value
+    #: the HTTP contract advertises, kept in sync by tests/test_llms_artifact.py.
+    price_sats: int = 2900
+    #: where the CVM contract is served, advertised in the CEP-6 catalog.
+    cvm_contract_url: str = "https://nosms.orangesync.tech/cvm/llms.txt"
 
     @classmethod
     def from_env(cls, env: dict | None = None, **overrides) -> "Config":
@@ -72,6 +78,9 @@ class Config:
             daily_cap=int(e.get("NOSMS_DAILY_CAP", "100")),
             sms_gateway_path=e.get("NOSMS_SMS_GATEWAY_PATH", "~/repos/sms-gateway"),
             max_body_chars=int(e.get("NOSMS_MAX_BODY_CHARS", "640")),
+            price_sats=int(e.get("NOSMS_PRICE_SATS", "2900")),
+            cvm_contract_url=e.get("NOSMS_CVM_CONTRACT_URL",
+                                   "https://nosms.orangesync.tech/cvm/llms.txt"),
         )
         if overrides:
             cfg = replace(cfg, **{k: v for k, v in overrides.items()

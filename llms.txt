@@ -7,6 +7,19 @@ Transport: fake
 Send a text message to any phone number. Your nostr key is your identity; you
 pay sats per message, postage-style. No account, no API key, no KYC.
 
+## Two surfaces, one contract
+
+| Surface | Who uses it | How |
+|---|---|---|
+| HTTP (this document) | scripts, `curl`, LLMs with network access | NIP-98-authenticated `POST /api/send` |
+| ContextVM (MCP over Nostr) | agents, in-shell clients | MCP JSON-RPC on kind `25910`, addressed by the server npub |
+
+The CVM surface has its own machine contract, reachable from the server itself
+via its `docs` tool: `docs/cvm/llms.txt` in this repo, and
+`https://nosms.orangesync.tech/cvm/llms.txt`
+at runtime. Both surfaces share one price table and one `Transport`, so the same
+numbers and the same capability flags apply to both.
+
 ## Endpoints
 
 - `GET  /api/health`   -> JSON {service, version, commit, transport, mint, ok}. Open, cheap, no outbound calls.
@@ -62,7 +75,8 @@ Both token encodings are accepted. The token's mint MUST be
 
 What happens, in order:
 
-1. The destination is priced from the prefix table below.
+1. The destination is priced from the flat ADR-0002 price below (one price for
+   every destination — JMP's plan is unlimited including international).
 2. Every proof in the token is checked against the mint (NUT-07); a spent proof
    is `409 token_already_spent`.
 3. The mint's own input fee (0.1 sat per proof on testnut) is deducted from the
@@ -74,9 +88,12 @@ What happens, in order:
    only sense in which holding a token is escrow at all.
 5. The message goes to the rail. On success you get `200` with:
 
-       {"message_id": "m_…", "price_sats": 500, "change_sats": 28,
+       {"message_id": "m_…", "price_sats": 2900, "change_sats": 28,
          "status": "queued", "status_url": "/api/message/m_…/status",
-         "refund_url": "/api/refund/m_…", "escrow": {"mint": "…", "amount_sats": 500}}
+         "refund_url": "/api/refund/m_…",
+         "escrow": {"mint": "…", "amount_sats": 2900}}
+
+**`price_sats` is 2900 for every destination.**
 
 **`queued` is not `delivered`.** Poll `status_url`; the reply carries both the
 normalised `status` (queued / sent / delivered / failed) and `provider_status`,
@@ -104,9 +121,22 @@ Config-driven, per key:
 
 Prices are charged in satoshis. The unit is sats — there is no fiat billing.
 
-- `+1` (US/CA): 100 sats
-- `+49`, `+44`, `+351`, `+91`: 500 sats
-- any other prefix: 500 sats (documented default; unknown is never free)
+**Flat: 2900 sats per message, for every destination** — domestic
+and international alike. The v1 rail's plan is unlimited *including*
+international, so the destination does not change the cost; the old
+domestic/international split is superseded (ADR-0002).
+
+The price is a rugpull-risk premium, not a cost pass-through:
+
+```
+price_sats = ceil(MULT * rail_replacement_usd * (1e8 / btc_usd))
+```
+
+with `MULT = 0.5`, `rail_replacement_usd = 4.99`, and `btc_usd` live from Binance
+`BTCUSDT`. The published figure (2900) is the rounded default; the raw
+formula value is 2886. There is a hard floor of 1000 sats.
+
+An unknown prefix is never free — there is no code path that returns 0.
 
 `GET /api/health` is free. `POST /api/send` costs the price above, per message.
 

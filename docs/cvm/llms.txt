@@ -84,8 +84,9 @@ Every refusal is a JSON-RPC `result` carrying `isError: true` and a body with:
 - `reason`: machine token — `payment_required`, `insufficient_funds`,
   `bad_destination`, `destination_unsupported`, `rail_not_configured`,
   `transport_error`, `rate_limited`, `owner_only`, `token_invalid`,
-  `token_wrong_mint`, `token_already_spent`, `token_state_unknown`,
-  `mint_error`, `mint_unreachable`, `not_found`, `unsupported method`.
+  `token_unsupported`, `token_empty`, `token_wrong_mint`,
+  `token_already_spent`, `token_state_unknown`, `mint_error`,
+  `mint_unreachable`, `not_found`, `unsupported method`.
 - `hint`: one human-readable sentence.
 
 Unknown methods answer with `unsupported method`. A refusal is *always*
