@@ -40,10 +40,13 @@ from .nanp import is_us_ca
 from .pacing import Pacer
 
 __all__ = ["JmpCheogramTransport", "JmpLink", "RAIL_UNAVAILABLE_PREFIX",
-           "is_rail_down"]
+           "is_rail_down", "DEFAULT_PACING_STATE"]
 
 #: Prefix that marks a SendResult as "the rail is down", not "this send failed".
 RAIL_UNAVAILABLE_PREFIX = "rail_unavailable:"
+
+#: Where the persisted daily cap + jittered gap live by default.
+DEFAULT_PACING_STATE = "~/.hermes/profiles/manager/state/jmp_pacing.json"
 
 #: Facts about the rail, not a policy knob — these never become True.
 RAIL_COUNTRIES = ["US", "CA"]
@@ -93,6 +96,27 @@ class JmpCheogramTransport:
         self._down_reason: str | None = None
         self.accepted_count = 0
         self.rejected_count = 0
+
+    @classmethod
+    def from_env(cls, env: dict | None = None, *, link=None) -> "JmpCheogramTransport":
+        """Build the rail from config alone — the shape the CVM runner calls.
+
+        ``NOSMS_TRANSPORT=jmp`` builds a paced rail over a long-lived
+        ``SlixmppLink`` (the ``slixmpp`` import is lazy, so importing this module
+        still needs no XMPP stack). ``link`` is injected by tests/probes so the
+        live stack is never required offline.
+        """
+        import os
+
+        from .jmp_link import SlixmppLink
+        from .pacing import load_pacing_policy
+
+        e = os.environ if env is None else env
+        if link is None:
+            link = SlixmppLink.from_env(e)
+        pacer = Pacer(load_pacing_policy(e),
+                      state_path=e.get("NOSMS_JMP_PACING_STATE", DEFAULT_PACING_STATE))
+        return cls(link, pacer=pacer)
 
     # --- capabilities: served FROM the rail -------------------------------
 

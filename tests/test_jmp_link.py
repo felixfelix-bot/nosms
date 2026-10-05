@@ -8,6 +8,7 @@ not-connected guard, terminal-reason short-circuit, the sqlite inbox write, and
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 
@@ -130,3 +131,115 @@ def test_from_env_reads_the_runtime_credential_file(tmp_path, monkeypatch):
     assert link.password == "s3cret"
     assert link.resource == "rail-test"
     assert link.inbox_db.endswith("inbox.db")
+
+
+# --- a timed-out send must NOT still go out later (double delivery) ----------
+#
+# The caller gives up on a timeout. If the future is left un-cancelled the queue
+# entry survives, `_sender` later dequeues it, calls `msg.send()`, and completes
+# the future — so the stanza goes out AFTER the rail already reported
+# `accepted=False` and the failover re-sent over email. The recipient then gets
+# BOTH. The timeout path must cancel the future so `_sender` skips the entry.
+
+def _timed_out_entry(tmp_path):
+    """Drive `send_message` into a real ack-timeout and return the queue entry."""
+    link = _link(tmp_path, send_timeout=0.01)
+    link._ready.set()
+    link._connected = True
+    link._outbox = asyncio.Queue()
+
+    class _StuckLoop:
+        """Accepts the queue put but never lets the future resolve (a link whose
+        ack never arrives) — the exact shape of a send that timed out."""
+
+        def call_soon_threadsafe(self, fn, *a):
+            fn(*a)                             # put_nowait runs; nothing acks
+
+    link._loop = _StuckLoop()
+    with pytest.raises(RailUnavailable) as excinfo:
+        link.send_message("+1" + "5551230000@cheogram.com", "hi")
+    assert excinfo.value.reason == "connection_lost"
+    return link, link._outbox.get_nowait()
+
+
+def test_a_timed_out_send_leaves_a_cancelled_future(tmp_path):
+    """Pin the mechanism: no cancel -> the entry stays transmittable."""
+    _, entry = _timed_out_entry(tmp_path)
+    fut = entry[3]
+    assert fut.done() is True                  # the defect: was False before the fix
+    assert fut.cancelled() is True
+
+
+def test_a_timed_out_send_is_never_transmitted_by_the_sender(tmp_path):
+    """`_sender` skips a cancelled entry, so the stanza never goes out late."""
+    link, entry = _timed_out_entry(tmp_path)
+
+    transmitted: list[str] = []
+
+    class _Client:
+        def is_connected(self):
+            return True
+
+        def Message(self):                     # noqa: N802 - slixmpp API
+            class _M:
+                def __setitem__(self, k, v):
+                    pass
+
+                def send(self_inner):
+                    transmitted.append("sent")
+            return _M()
+
+    async def drive():
+        queue = asyncio.Queue()
+        queue.put_nowait(entry)
+        link._outbox = queue
+        task = asyncio.ensure_future(link._sender(_Client()))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(drive())
+    assert transmitted == []                   # the stanza never went out
+
+
+def test_an_accepted_send_still_transmits(tmp_path):
+    """Non-vacuity control: with a live (un-cancelled) future the sender DOES
+    transmit, so the test above is not passing because `_sender` is inert."""
+    link = _link(tmp_path)
+    transmitted: list[str] = []
+
+    class _Client:
+        def is_connected(self):
+            return True
+
+        def Message(self):                     # noqa: N802 - slixmpp API
+            class _M:
+                def __setitem__(self, k, v):
+                    pass
+
+                def send(self_inner):
+                    transmitted.append("sent")
+            return _M()
+
+    async def drive():
+        queue = asyncio.Queue()
+        fut = asyncio.get_event_loop().create_future()
+        queue.put_nowait(("+1" + "5551230000@cheogram.com", "hi", "m1", fut))
+        link._outbox = queue
+        task = asyncio.ensure_future(link._sender(_Client()))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        return fut
+
+    fut = asyncio.run(drive())
+    assert transmitted == ["sent"]
+    assert fut.result() is True

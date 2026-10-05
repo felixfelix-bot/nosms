@@ -138,9 +138,46 @@ def test_runner_builds_the_requested_rail_and_names_it():
     assert runner.build_transport("email_gateway").name == "email_gateway"
 
 
-def test_runner_refuses_a_rail_it_cannot_load_rather_than_faking_it():
+def test_runner_builds_the_jmp_rail_now_that_it_exists(monkeypatch, tmp_path):
+    """The M5 JMP/Cheogram rail has landed, so the runner must build it (paced).
+
+    Supersedes the earlier "refuses jmp" assertion: that premise was "the JMP
+    transport lands with the sibling M5 card". It has landed, so the honest
+    behaviour is to construct the rail — with the live XMPP link injected here so
+    the test stays offline and side-effect-free.
+    """
+    from app.transports.jmp_link import SlixmppLink
+
+    class _NullLink:
+        def is_connected(self):
+            return True
+
+        def send_message(self, to_jid, body, msg_id=None):
+            return None
+
+    monkeypatch.setattr(SlixmppLink, "from_env",
+                        classmethod(lambda cls, env=None, **kw: _NullLink()))
+    monkeypatch.setenv("NOSMS_JMP_PACING_STATE", str(tmp_path / "pacing.json"))
+
+    transport = runner.build_transport("jmp")
+    assert transport.name == "jmp_cheogram"
+    assert transport.pacer is not None            # the personal line is paced
+    assert transport.capabilities.delivery_receipts is False
+
+
+def test_runner_refuses_a_rail_it_cannot_load_rather_than_faking_it(monkeypatch):
     """A rail we cannot import must stop the server: describing a capability we
     do not have is the one thing this service must never do."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "app.transports.jmp_cheogram":
+            raise ImportError("simulated: not in this checkout")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
     with pytest.raises(SystemExit) as exc:
         runner.build_transport("jmp")
     assert "not available" in str(exc.value)

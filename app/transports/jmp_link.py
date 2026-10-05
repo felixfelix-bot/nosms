@@ -178,6 +178,14 @@ class SlixmppLink:
             # aliases from 3.11 on. Catching the wrong one would let a send
             # timeout escape as an unexpected exception, breaking the
             # "only raises RailUnavailable" contract the refund path relies on.
+            #
+            # CANCEL before giving up. The queue entry is still sitting in the
+            # outbox and `_sender` only skips entries whose future is done, so
+            # leaving it un-cancelled means the stanza is transmitted *after* the
+            # caller already reported accepted=False and the failover re-sent the
+            # same message over the email rail — the recipient gets it TWICE.
+            # A cancelled future is done(), so `_sender` skips it.
+            fut.cancel()
             raise RailUnavailable("connection_lost",
                                   "no acknowledgement before timeout") from exc
         except RuntimeError as exc:
@@ -274,6 +282,15 @@ class SlixmppLink:
         except asyncio.TimeoutError:
             ok = False
         if not ok:
+            # A connect that failed (bad auth, stream error, or a timeout) leaves
+            # the underlying XMPP connection open; the supervise loop would then
+            # retry on top of it and leak one connection per attempt. Close it
+            # before returning so the next cycle starts from a clean socket.
+            try:
+                x.disconnect()
+            except Exception:                  # noqa: BLE001 - best effort, never fatal
+                pass
+            self._client = None
             self._set_disconnected(self._terminal_reason or "not_connected")
             return
 
