@@ -207,9 +207,14 @@ def create_app(config: Config | dict | None = None, transport=None, mint=None) -
                        "token_sats": token_obj.amount, "mint_fee_sats": mint_fee,
                        "net_sats": net})
 
-        # 6. abuse controls — before any funds are consumed
+        # 6. abuse controls — atomically, before any funds are consumed.
+        # ``check_and_record`` holds the store lock across both the check and the
+        # record, closing the check-then-act window: a separate ``check`` here and
+        # ``record`` after the swap let two concurrent same-identity sends to one
+        # destination both pass the cooldown. Recording before the swap means a
+        # failed swap still consumes the slot, but no funds are taken (502 below).
         try:
-            quota.check(pubkey, dest)
+            quota.check_and_record(pubkey, dest)
         except QuotaError as exc:
             return error_response(429, exc.reason, exc.hint,
                                   extra={"retry_after_seconds": exc.retry_after})
@@ -238,7 +243,6 @@ def create_app(config: Config | dict | None = None, transport=None, mint=None) -
             escrow_token=encode_token(cfg.mint_url, escrow_proofs),
             change_token=encode_token(cfg.mint_url, change_proofs) if change_proofs else None,
             status="queued")
-        quota.record(pubkey, dest)
 
         # 8. hand it to the rail
         try:
