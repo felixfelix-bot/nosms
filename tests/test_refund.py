@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from app.cashu import decode_token
 from app.escrow import EscrowStore
+from app.pricing import DEFAULT_PRICE_SATS
 from app.refunds import sweep_refunds
 from app.transports import FakeTransport
 from tests.conftest import BASE_URL, nip98_header
@@ -44,7 +45,7 @@ def env(tmp_path):
     transport.set_status("fake-1", "sent", raw="accepted")   # accepted, not delivered
     app = make_app(tmp_path, transport=transport, mint=mint, refund_after_seconds=900)
     client = TestClient(app)
-    r = _send(client, make_token([128]))                     # 128 sats, price 100
+    r = _send(client, make_token([4096]))                    # 4096 sats, price 2900
     assert r.status_code == 200, r.text
     return client, app, transport, r.json()["message_id"]
 
@@ -57,7 +58,7 @@ def test_sweep_refunds_an_undelivered_message_once_even_if_run_twice(env):
     assert first["refunded"] == 1
     rec = app.state.escrow.get(mid)
     assert rec.refunded_at is not None
-    assert rec.refund_amount == 128                          # price + change, all of it
+    assert rec.refund_amount == 4096                         # price + change, all of it
     token_after_first = rec.refund_token
     assert token_after_first
 
@@ -67,7 +68,7 @@ def test_sweep_refunds_an_undelivered_message_once_even_if_run_twice(env):
     assert second["refunded"] == 0
     assert second["checked"] == 0            # a refunded row is no longer offered
     assert app.state.escrow.get(mid).refund_token == token_after_first
-    assert app.state.escrow.get(mid).refund_amount == 128
+    assert app.state.escrow.get(mid).refund_amount == 4096
 
 
 def test_refund_token_is_worth_the_escrowed_amount_and_is_unspent(env):
@@ -77,9 +78,9 @@ def test_refund_token_is_worth_the_escrowed_amount_and_is_unspent(env):
     r = _refund(client, mid)
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["amount_sats"] == 128
+    assert body["amount_sats"] == 4096
     token = decode_token(body["token"])
-    assert token.amount == 128
+    assert token.amount == 4096
     # the payer can still spend it: none of its secrets were burned at the mint
     assert not (set(p["secret"] for p in token.proofs) & app.state.mint.spent_secrets())
 
@@ -123,9 +124,11 @@ def test_claim_refund_is_atomic_across_two_callers(tmp_path):
     """The store, not the caller, decides who wins — a row-level claim."""
     store = EscrowStore(str(tmp_path / "e.db"))
     store.create(message_id="m_1", pubkey="aa" * 32, dest="+15555550100",
-                 rail="fake", price=100, change=0, escrow_token="cashuAesc",
+                 rail="fake", price=DEFAULT_PRICE_SATS, change=0, escrow_token="cashuAesc",
                  status="sent", provider_message_id="p1")
-    assert store.claim_refund("m_1", token="cashuArefund", amount=100, reason="timeout") is True
-    assert store.claim_refund("m_1", token="cashuAother", amount=100, reason="timeout") is False
+    assert store.claim_refund("m_1", token="cashuArefund",
+                              amount=DEFAULT_PRICE_SATS, reason="timeout") is True
+    assert store.claim_refund("m_1", token="cashuAother",
+                              amount=DEFAULT_PRICE_SATS, reason="timeout") is False
     assert store.get("m_1").refund_token == "cashuArefund"
-    assert store.get("m_1").refund_amount == 100
+    assert store.get("m_1").refund_amount == DEFAULT_PRICE_SATS

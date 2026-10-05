@@ -12,6 +12,7 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
+from app.pricing import DEFAULT_PRICE_SATS
 from app.transports import FakeTransport
 from tests.conftest import BASE_URL, nip98_header
 from tests.stubs import StubMint, make_app, make_token
@@ -42,7 +43,7 @@ def sent(tmp_path):
     transport = FakeTransport(default_status="sent", default_raw="accepted")
     app = make_app(tmp_path, transport=transport, mint=mint)
     client = TestClient(app)
-    r = _send(client, make_token([128]))
+    r = _send(client, make_token([4096]))
     assert r.status_code == 200, r.text
     return client, app, transport, r.json()["message_id"]
 
@@ -65,7 +66,7 @@ def test_status_reports_normalised_and_raw_provider_status(sent):
     assert body["status"] in ("queued", "sent", "delivered", "failed")
     assert "provider_status" in body          # the provider's own string
     assert body["provider"] == "fake"
-    assert body["price_sats"] == 100
+    assert body["price_sats"] == DEFAULT_PRICE_SATS
 
 
 def test_status_polls_the_provider_live_and_can_move_to_delivered(sent):
@@ -83,12 +84,12 @@ def test_status_exposes_failure_and_refund_state(tmp_path):
     mint, transport = StubMint(fee_ppk=0), FakeTransport(accept=False)
     app = make_app(tmp_path, transport=transport, mint=mint)
     client = TestClient(app)
-    assert _send(client, make_token([128])).status_code == 502
+    assert _send(client, make_token([4096])).status_code == 502
     mid = app.state.escrow.list_all()[0].message_id
     body = _status(client, mid).json()
     assert body["status"] == "failed"
     assert body["refunded"] is True
-    assert body["refund"]["amount_sats"] == 128
+    assert body["refund"]["amount_sats"] == 4096
 
 
 def test_status_is_404_for_another_identity(sent):
