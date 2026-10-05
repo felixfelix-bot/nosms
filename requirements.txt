@@ -4,3 +4,7 @@ uvicorn[standard]>=0.27
 pydantic>=2.6
 # BIP-340 schnorr verification for NIP-98 (libsecp256k1 bindings)
 coincurve>=19.0
+# JMP/Cheogram rail: long-lived XMPP client (app/transports/jmp_link.py). The
+# rail is optional at runtime (NOSMS_TRANSPORT), so importing the package must
+# not require it — the import is lazy inside SlixmppLink.
+slixmpp>=1.17

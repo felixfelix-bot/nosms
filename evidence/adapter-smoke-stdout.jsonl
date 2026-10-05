@@ -1,0 +1,2 @@
+{"event": "connected", "jid": "hermes-jmp@jabber.fr", "capabilities": {"rail": "jmp_cheogram", "available": true, "best_effort": true, "delivery_receipts": false, "countries": ["US", "CA"], "down_reason": null, "countries_note": "US/Canada numbering only; SMS over SIP unsupported"}}
+{"event": "send_result", "to": "+1******8875", "accepted": true, "rail": "jmp_cheogram", "receipt": null, "detail": "accepted by the JMP gateway; no delivery receipt exists"}
