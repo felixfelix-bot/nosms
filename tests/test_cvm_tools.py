@@ -303,6 +303,45 @@ def test_best_effort_miss_is_not_refunded_and_never_claims_delivery():
     assert body["receipt"] is None
 
 
+# --- a rail that RAISES (found live against the email rail) -----------------
+
+class RaisingTransport(FakeTransport):
+    """The email rail's real shape for a non-+1 destination: it raises."""
+    name = "raising"
+
+    def send(self, dest, body, **kwargs):
+        from app.transports.email_gateway import UnsupportedDestination
+        raise UnsupportedDestination("destination_unsupported", "rail covers US/CA only")
+
+
+def test_a_rail_that_raises_is_refunded_and_returns_a_visible_error(tmp_path):
+    """Regression for a live UnboundLocalError: the failure branch recorded an
+    escrow row and hit an unbound `change_sats`, so the whole tools/call died
+    and the caller saw NOTHING. Found by scripts/cvm_live_verify.py against the
+    email rail; this pins the path so it cannot come back."""
+    mint = StubMint(fee_ppk=0)
+    t = tools(RaisingTransport(), mint=mint,
+              escrow=EscrowStore(str(tmp_path / "e.db")))
+    result = t.call("sms.send", {"to": "+15555550100", "body": "hi",
+                                 "cashu_token": make_token([4096])})
+    body = assert_visible_error(result, "destination_unsupported")
+    assert body["refunded"] is True
+    assert body["refund_token"]
+    # the ledger holds the failure and the refund, and the refund is the postage
+    rows = t.escrow.list_all()
+    assert len(rows) == 1
+    assert rows[0].status == "failed" and rows[0].refunded is True
+    assert rows[0].refund_amount == 4096
+
+
+def test_a_raising_rail_that_is_best_effort_still_answers_the_caller():
+    t = tools(RaisingTransport(), mint=StubMint(fee_ppk=0))
+    result = t.call("sms.send", {"to": "+15555550100", "body": "hi",
+                                 "cashu_token": make_token([4096])})
+    # answered, not silence — whatever the refund decision
+    assert result and result["content"]
+
+
 # --- destination gate ------------------------------------------------------
 
 def test_a_destination_outside_the_rails_countries_is_refused_before_payment():

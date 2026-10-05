@@ -318,6 +318,10 @@ class CvmTools:
             return None, None
 
         escrow_token, change_token = _escrow_held()
+        # Bound before the rail is called: the failure branch below records the
+        # escrow row, and a rail that RAISES must not hit an unbound local
+        # (found live against the email rail, which refuses non-+1 destinations).
+        change_sats = (held or {}).get("change_sats", 0)
 
         # --- hand it to the rail -----------------------------------------
         try:
@@ -339,7 +343,6 @@ class CvmTools:
             raise ToolError(reason, detail, refunded=refund_token is not None,
                             refund_token=refund_token) from exc
 
-        change_sats = (held or {}).get("change_sats", 0)
         if self.escrow is not None:
             self.escrow.create(
                 message_id=record_id, pubkey=caller or "anonymous", dest=number,
