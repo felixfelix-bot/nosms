@@ -78,6 +78,10 @@ is actually serving. `JmpCheogramTransport.capability_flags()` (and
 | `countries` | `["US", "CA"]` | JMP numbering is US/Canada only; SMS over SIP is unsupported |
 
 A non-`+1` destination raises `destination_unsupported` **before** the link is touched.
+US/CA is enforced by an explicit NANP gate (`app/transports/nanp.py`, shared with the
+email rail): a Caribbean `+1` (Jamaica 876, Trinidad 868, …) or a US territory
+(Puerto Rico 787, USVI 340, Guam 671, …) is **not** US/CA and is refused, so the gate
+means exactly what `countries` advertises.
 
 ## Pacing (ADR-0002 compensating control #2)
 
@@ -94,9 +98,30 @@ The next gap is re-drawn uniformly from the range after **every** accepted send 
 fixed interval is itself a signature. State is persisted, so a reconnect or a process
 restart cannot reset the counter.
 
-A paced call raises `RailPaced` — it is **not** a failed `SendResult`. The message was
-never attempted, so charging-then-refunding would be wrong; the caller answers
-`429` + `Retry-After` (from `RailPaced.retry_after`) and the payer retries.
+**Reserve before the send.** A service endpoint is served from a threadpool, so two
+callers can arrive at the same instant. `check()` → blocking send → `record_send()`
+would be a check-then-act race: both callers see `count == daily_cap - 1` and both
+send, voiding both the cap and the gap. The only supported path for a real send is
+therefore:
+
+1. `claim()` — atomically **reserves** the slot under a lock *before* the send is
+   attempted, and persists it (a process that dies mid-send does not hand the same
+   slot to its successor);
+2. `release(claim, accepted=True)` — confirms the send and starts the jittered gap;
+   `release(claim, accepted=False)` — **refunds** the slot, because a message that
+   never left the client must not consume the allowance or move the clock.
+
+`check()` remains read-only (the 429 signal, never reserves). A paced call raises
+`RailPaced` — it is **not** a failed `SendResult`. The message was never attempted, so
+charging-then-refunding would be wrong; the caller answers `429` + `Retry-After` (from
+`RailPaced.retry_after`) and the payer retries. Concurrent callers are serialised: one
+sends, the others get `daily_cap_reached` / `send_in_flight` and retry.
+
+**A corrupt counter fails closed.** State that cannot be parsed used to degrade to a
+blank day, i.e. silently restore a *full* daily cap — the unsafe direction for an abuse
+surface. It is now refused with `pacing_state_corrupt` on every claim, the unreadable
+bytes are left in place (never overwritten), and the refusal survives restarts until an
+operator clears the file. `snapshot()` reports `corrupt: true` so `/api/health` shows it.
 
 ## Degrade path (ADR-0002 compensating control #3)
 
@@ -110,11 +135,23 @@ exists to keep that flag *honest*:
 | primary down, fallback accepted | `accepted=True`, `rail=email_gateway` | no (it was sent) |
 | both fail | `accepted=False`, `refundable=True` | **yes** |
 | fallback cannot serve the destination | `accepted=False`, `refundable=True` | **yes** |
+| fallback rail itself raises (`RailUnavailable` / any exception) | `accepted=False`, `refundable=True`, logged | **yes** |
 | primary paced | `RailPaced` propagates | no — defer, do not refund |
 | primary rejects the request (bad destination / empty body) | returned as-is | per the result |
+| primary transient (reconnect window) | `accepted=False`, `primary_transient:*` | **yes** — never diverted to email |
 
 Degrading around pacing would defeat pacing and dump the load on the email rail's own
 abuse surface, so `RailPaced` deliberately propagates.
+
+**Only a terminal failure degrades.** The degrade path is for a rail that cannot
+recover by itself (`auth_failed` / `terminated`). A routine reconnect
+(`not_connected` / `connection_lost`) does **not** divert paid traffic to the email
+rail — every reconnect window would otherwise hand the load to the email rail's own
+abuse surface. The caller gets a refundable `primary_transient:*` result and the send
+can be retried on the primary. The fallback failing is itself made visible: a
+`RailUnavailable` or any other exception from the fallback becomes an
+`accepted=False` `all_rails_failed:*` result and a `logging.warning`, never a raw
+exception the escrow layer is merely assumed to catch.
 
 ## Operations
 
@@ -144,10 +181,21 @@ NOSMS_JMP_RESOURCE=nosms                # XMPP resource (must not collide with a
 5. **Inbound is one-shot.** It exists only while a client is attached and is consumed on
    read; that is why the link stays attached rather than polling.
 6. **The ToS risk is the operator's, and it is priced, not solved.**
+7. **A terminal link failure stops retrying.** `auth_failed` / `terminated` is sticky, so
+   the link reconnects at most `MAX_TERMINAL_RETRIES` (3) times and then stops — repeated
+   re-auth against the server is itself abusive-looking on a personal line, and it can
+   never succeed without an operator fixing the credential. The rail stays down and
+   `capability_flags()["available"]` is `false`.
 
 ## Tests
 
 `tests/test_jmp_rail.py`, `tests/test_pacing.py`, `tests/test_failover.py`,
-`tests/test_jmp_link.py` — all offline (the XMPP link is a double; `slixmpp` is never
-imported). The live paths are covered by `scripts/jmp_cold_send_probe.py` and
-`scripts/jmp_rail_smoke.py`, run by hand against the real account.
+`tests/test_jmp_link.py`, `tests/test_jmp_probe.py` — all offline (the XMPP link is a
+double; `slixmpp` is never imported). The live paths are covered by
+`scripts/jmp_cold_send_probe.py` and `scripts/jmp_rail_smoke.py`, run by hand against
+the real account.
+
+The pacing race is pinned by two concurrency tests (two threads at `daily_cap - 1`, and
+two threads with the jittered gap elapsed): exactly one send is attempted, and the
+loser is refused with a real retry hint rather than fire-and-forget. A third test proves
+a refused send refunds its reserved slot.
