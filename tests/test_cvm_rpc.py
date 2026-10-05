@@ -109,7 +109,12 @@ def test_initialize_reports_the_protocol_and_server_info():
 def test_tools_list_matches_the_contract():
     out = handle_rpc(req("tools/list"), tools())
     names = {t["name"] for t in out["result"]["tools"]}
-    assert names == {"sms.send", "sms.status", "sms.pricing", "sms.capabilities", "docs"}
+    # The JMP tools (jmp.status / jmp.funding / jmp.credentials) are part of the
+    # advertised surface as of the funding-facts card; the SMS tools are
+    # unchanged. Every name here must also be documented in docs/cvm/llms.txt
+    # (test_cvm_contract enforces that).
+    assert names == {"sms.send", "sms.status", "sms.pricing", "sms.capabilities", "docs",
+                     "jmp.status", "jmp.funding", "jmp.credentials"}
 
 
 def test_resources_read_returns_the_contract_verbatim():

@@ -76,6 +76,22 @@ class ContractContext:
                 "contract_url": self.contract_url, "naddr": self.naddr}
 
 
+class ToolError(Exception):
+    """A refusal that must reach the caller as a visible MCP tool error.
+
+    Lives here (not in the tool module) because more than one tool surface
+    raises it — `app/cvm_tools.py` for the SMS tools and `app/jmp_tools.py` for
+    the JMP ones — and a single error type is what makes the dispatch's one
+    `except ToolError` cover every refusal on the wire.
+    """
+
+    def __init__(self, reason: str, hint: str = "", **extra):
+        super().__init__(reason)
+        self.reason = reason
+        self.hint = hint
+        self.extra = extra
+
+
 def mcp_tool_result(payload: dict) -> dict:
     """An MCP tool result: JSON text content, no error flag."""
     return {"content": [{"type": "text", "text": json.dumps(payload)}]}

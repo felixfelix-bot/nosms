@@ -164,9 +164,15 @@ async def main() -> int:
     transport = build_transport(args.transport)
     contract = ContractContext(npub=npub, relays=tuple(args.relays),
                                contract_url=args.contract_url)
+    # The JMP capability (jmp.status / jmp.funding / jmp.credentials). It reads
+    # its credential from OpenBao and fails closed when it is absent; the server
+    # key below is what NIP-44-encrypts a released credential to the caller.
+    from scripts.jmp_live import build_jmp_service                     # noqa: E402
+    jmp = build_jmp_service(server_secret_hex=keys.secret_key().to_hex(),
+                            transcript_path=os.environ.get("NOSMS_JMP_TRANSCRIPT"))
     tools = CvmTools(transport, docs=load_docs(), owner_pubkeys=owners,
                      mint=build_mint(), escrow=EscrowStore(args.db),
-                     contract=contract, btc_usd=args.btc_usd)
+                     contract=contract, btc_usd=args.btc_usd, jmp=jmp)
 
     signer = NostrSigner.keys(keys)
     client = ClientBuilder().signer(signer).build()
