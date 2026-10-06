@@ -12,7 +12,9 @@ Rails
 Composition
 -----------
 * :class:`FailoverTransport` — puts the email rail behind JMP as the degrade
-  path required by ADR-0002, keeping refundability honest.
+  path required by ADR-0002, keeping refundability honest. It is also offered
+  behind the WhatsApp rail (``whatsapp_email``), which reaches the same wrapper
+  by *raising* ``RailUnavailable`` rather than returning the outage token.
 
 Entry point
 -----------
@@ -20,6 +22,10 @@ Entry point
 configuration; capability flags always come from the rail that is actually
 serving. (The HTTP service has its own ``app.main.build_transport(cfg)`` for the
 Telnyx/escrow path; both are kept because they serve different entry points.)
+
+Names: ``fake`` (default), ``email_gateway``, ``jmp_cheogram`` / ``jmp_only``,
+``whatsapp`` (the paced rail from ADR-0003, alone) and ``whatsapp_email`` (the
+same rail with the email degrade path behind it).
 """
 from __future__ import annotations
 
@@ -34,7 +40,8 @@ from .fake import FakeTransport
 from .jmp_cheogram import JmpCheogramTransport, JmpLink, is_rail_down
 from .pacing import Pacer, PacingDecision, PacingPolicy, load_pacing_policy
 from .telnyx import SmsGatewayNotFound, TelnyxTransport, load_sms_gateway
-from .whatsapp import AdbWhatsAppDriver, WhatsAppConfig, WhatsAppTransport
+from .whatsapp import (AdbWhatsAppDriver, WhatsAppConfig, WhatsAppTransport,
+                       DEFAULT_HALT_STATE as WHATSAPP_HALT_STATE)
 
 __all__ = [
     "Capabilities", "SendResult", "Transport", "Pollable", "TransportStatus",
@@ -85,8 +92,22 @@ def build_transport(name: str | None = None, *, env: dict | None = None,
             smtp_host=e.get("NOSMS_SMTP_HOST", "localhost"),
             smtp_port=int(e.get("NOSMS_SMTP_PORT", "25")),
             sender=e.get("NOSMS_SMTP_SENDER", "sms@orangesync.tech")))
-    if name in ("whatsapp", "wa"):
+    if name in ("whatsapp", "wa", "whatsapp_email"):
         # Building the rail touches no device and no network: the driver only
         # records its config, and `capabilities` never probes (see the module).
-        return WhatsAppTransport.from_env(e)
+        # ``from_env`` also builds the rail's OWN pacing counter (ADR-0003
+        # control #2: volume is the abuse surface), and the persisted kill-switch
+        # path is resolved here so a restart cannot become the retry a ban
+        # forbids.
+        rail = WhatsAppTransport.from_env(
+            e, halt_path=e.get("NOSMS_WHATSAPP_HALT_STATE", WHATSAPP_HALT_STATE))
+        if name == "whatsapp_email":
+            # ADR-0002's degrade path (control #3) behind the WhatsApp rail — the
+            # same composition ``jmp_cheogram`` uses. The wrapper handles this
+            # rail's *raising* shutdown shape as well as JMP's returned token.
+            return FailoverTransport(rail, EmailGatewayTransport(
+                smtp_host=e.get("NOSMS_SMTP_HOST", "localhost"),
+                smtp_port=int(e.get("NOSMS_SMTP_PORT", "25")),
+                sender=e.get("NOSMS_SMTP_SENDER", "sms@orangesync.tech")))
+        return rail
     raise ValueError(f"unknown transport {name!r}")

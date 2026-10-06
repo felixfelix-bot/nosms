@@ -489,6 +489,19 @@ def test_registry_still_refuses_an_unknown_rail():
         build_transport("carrier-pigeon")
 
 
+def test_registry_offers_the_whatsapp_rail_with_the_email_degrade_path():
+    """The same composition `jmp_cheogram` uses, for the ADR-0003 rail."""
+    from app.transports import build_transport
+    from app.transports.failover import FailoverTransport
+    t = build_transport("whatsapp_email",
+                        env={"NOSMS_WHATSAPP_SERIAL": "emulator-5554"})
+    assert isinstance(t, FailoverTransport)
+    assert isinstance(t.primary, WhatsAppTransport)
+    assert t.primary.pacer is not None          # paced, like the plain rail
+    assert t.fallback.name == "email_gateway"
+    assert t.name == "failover:whatsapp->email_gateway"
+
+
 def test_http_service_build_transport_selects_the_whatsapp_rail():
     from app.main import build_transport as http_build
     cfg = Config.from_env({"NOSMS_TRANSPORT": "whatsapp",

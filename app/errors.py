@@ -28,14 +28,24 @@ def _header_safe(value) -> str:
 
 
 def error_response(status_code: int, reason: str, hint: str,
-                   extra: dict | None = None) -> JSONResponse:
+                   extra: dict | None = None, *,
+                   retry_after: int | None = None) -> JSONResponse:
+    """Build the `X-Reason`/`X-Hint` response, optionally with `Retry-After`.
+
+    ``retry_after`` is the deferral header a *paced* call answers with (ADR-0002
+    control #2 / ADR-0003 control #2): the message was never attempted, so the
+    caller is told when to come back instead of being handed a failure.
+    """
     reason = _header_safe(reason)
     hint = _header_safe(hint)
     payload = {"error": reason, "hint": hint}
     if extra:
         payload.update(extra)
+    headers = {"X-Reason": reason, "X-Hint": hint}
+    if retry_after is not None:
+        headers["Retry-After"] = str(max(0, int(retry_after)))
     return JSONResponse(
         payload,
         status_code=status_code,
-        headers={"X-Reason": reason, "X-Hint": hint},
+        headers=headers,
     )

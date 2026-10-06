@@ -35,6 +35,14 @@ reconnect is **not** that:
 A genuine per-send failure that is not a rail-outage token (an empty body, say) is
 returned untouched.
 
+Both shapes of "the rail is down" are handled
+---------------------------------------------
+The JMP rail *returns* ``SendResult.detail == "rail_unavailable:<reason>"``; the
+WhatsApp rail *raises* :class:`RailUnavailable` (ADR-0003: a ban must be loud and
+must stop the rail, not be flattened into one more failed send). A primary that
+raises must degrade exactly like one that returns, or wrapping the WhatsApp rail
+in this wrapper would turn every ban into an unhandled exception.
+
 Two deliberate non-degradations:
 
 * a **paced** primary (:class:`RailPaced`) propagates. Degrading around pacing
@@ -107,7 +115,27 @@ class FailoverTransport:
 
     def send(self, dest: str, body: str, **kwargs) -> SendResult:
         if self._primary_serving():
-            result = self.primary.send(dest, body, **kwargs)
+            try:
+                result = self.primary.send(dest, body, **kwargs)
+            except UnsupportedDestination:
+                # A request error, decided before any money moved: never re-routed.
+                raise
+            except RailPaced:
+                # Pacing is not an outage: the caller defers (429/Retry-After).
+                raise
+            except RailUnavailable as exc:
+                # A primary that RAISES (the WhatsApp rail, ADR-0003) must degrade
+                # exactly like one that returns `rail_unavailable:<reason>` (the
+                # JMP rail) — otherwise a ban would escape as a raw exception.
+                if exc.reason in TERMINAL_RAIL_REASONS:
+                    self._warn("primary rail terminal (raised): %s:%s",
+                               exc.reason, exc.detail)
+                    return self._degrade(dest, body, **kwargs)
+                self._warn("primary rail transient (raised): %s:%s",
+                           exc.reason, exc.detail)
+                return SendResult(
+                    accepted=False, rail=self.name, best_effort=True, receipt=None,
+                    detail=f"primary_transient:rail_unavailable:{exc.reason}")
             if result.accepted or not is_rail_down(result):
                 # sent, or a genuine per-send failure the escrow will refund.
                 return result
