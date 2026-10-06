@@ -20,8 +20,10 @@ export type Capabilities = {
 
 export type Pricing = {
   unit?: string;
-  domestic?: number;
-  international?: number;
+  /** prefix -> sats. The server's own table; the authority for a live price. */
+  prefixes?: Record<string, number>;
+  /** price for the prefix that matched, when a destination was supplied. */
+  price?: number;
   default?: number;
   [key: string]: unknown;
 };

@@ -21,10 +21,17 @@ type StatusKind = 'idle' | 'ok' | 'warn' | 'error';
 
 // Build-time pinned identity and relays (vite `define`). Empty string means "no
 // pin": the napplet then resolves the server by discovery alone.
+//
+// `__NOSMS_CVM_PUBKEY__` is HEX because that is what the shell's `cvm.callTool`
+// accepts (measured 2026-10-05: an npub makes it fail with "Input string must
+// contain hex characters in even length"). `__NOSMS_CVM_NPUB__` is the same
+// identity in the form a human recognises, for display.
 declare const __NOSMS_CVM_PUBKEY__: string;
+declare const __NOSMS_CVM_NPUB__: string;
 declare const __NOSMS_CVM_RELAYS__: string;
 
-const DEFAULT_SERVER_PUBKEY = __NOSMS_CVM_PUBKEY__ || '__NOSMS_CVM_PUBKEY__';
+const DEFAULT_SERVER_PUBKEY = __NOSMS_CVM_PUBKEY__;
+const DEFAULT_SERVER_NPUB = __NOSMS_CVM_NPUB__;
 const DEFAULT_SERVER_RELAYS = (__NOSMS_CVM_RELAYS__
   ? __NOSMS_CVM_RELAYS__.split(/[\s,]+/).filter(Boolean)
   : ['wss://relay.primal.net', 'wss://nos.lol']);
@@ -105,6 +112,34 @@ function renderCapabilities(caps: Capabilities | null, reason?: string): void {
   }
 }
 
+/**
+ * Live price from the server's own table, or null when the server did not answer.
+ *
+ * The server returns the whole table (`prefixes`) plus, when it was given a
+ * destination, the price for that destination. The bundled table is the
+ * fallback; it is generated from the same Python source, but the server's answer
+ * always wins — a price shown to a user must be the price the service meters.
+ */
+function livePrice(dest: string, live: Pricing | null): number | null {
+  if (!live) return null;
+  // `price` is authoritative when present: the server already resolved it.
+  if (typeof live.price === 'number') return live.price;
+  let number: string;
+  try {
+    number = normalizeE164(dest);
+  } catch {
+    return null;
+  }
+  const prefixes = live.prefixes;
+  if (prefixes && typeof prefixes === 'object') {
+    const match = Object.keys(prefixes)
+      .filter((prefix) => number.startsWith(prefix))
+      .sort((a, b) => b.length - a.length)[0];
+    if (match !== undefined) return prefixes[match];
+  }
+  return typeof live.default === 'number' ? live.default : null;
+}
+
 /** Price shown before a send. Uses the server's live table when available. */
 function renderPrice(): void {
   const raw = elements.toInput.value.trim();
@@ -128,14 +163,7 @@ function renderPrice(): void {
     return;
   }
 
-  // The live table wins when the server advertised one. Domestic / international
-  // are the server's own labels; the prefix match only picks which one applies.
-  let live: number | null = null;
-  if (livePricing) {
-    if (zone === 'US/CA') live = livePricing.domestic ?? null;
-    else live = livePricing.international ?? livePricing.default ?? null;
-  }
-
+  const live = livePrice(raw, livePricing);
   const sats = live ?? bundled;
   elements.priceValue.textContent = `${formatSats(sats)} · ${zone}`;
   elements.priceSource.textContent = live !== null ? 'live from server' : 'bundled table';
@@ -143,7 +171,10 @@ function renderPrice(): void {
 }
 
 function renderServer(): void {
-  elements.factServer.textContent = server ? `${shortKey(server.pubkey)}${server.name ? ` (${server.name})` : ''}` : 'none';
+  const npub = server && server.pubkey === DEFAULT_SERVER_PUBKEY ? DEFAULT_SERVER_NPUB : undefined;
+  elements.factServer.textContent = server
+    ? `${displayId(server.pubkey, npub)}${server.name ? ` (${server.name})` : ''}`
+    : 'none';
   elements.connectButton.disabled = !cvmAvailability().domain;
   renderPrice();
 }
@@ -163,7 +194,15 @@ function contractDocument(): string {
 
 /** True when the build pinned a server identity (direct resolution). */
 function hasPinnedServer(): boolean {
-  return Boolean(DEFAULT_SERVER_PUBKEY) && !DEFAULT_SERVER_PUBKEY.startsWith('__');
+  return /^[0-9a-f]{64}$/i.test(DEFAULT_SERVER_PUBKEY);
+}
+
+/**
+ * Render an identity for a human: npub when we have it, else the short hex.
+ */
+function displayId(pubkeyHex: string, npub?: string): string {
+  if (!pubkeyHex) return 'none';
+  return npub && npub.length > 12 ? npub : shortKey(pubkeyHex);
 }
 
 /**
@@ -183,7 +222,7 @@ async function connect(): Promise<void> {
   setStatus('idle', 'Discovering servers');
 
   const resolution: {
-    direct: { pubkey: string; relays: string[] } | null;
+    direct: { npub: string; pubkey: string; relays: string[] } | null;
     discovered: Array<{ pubkey: string; name?: string }>;
     chosen: 'direct' | 'discovery' | 'none';
     error?: string;
@@ -191,7 +230,11 @@ async function connect(): Promise<void> {
 
   // --- path 1: direct, by the pinned npub --------------------------------
   if (hasPinnedServer()) {
-    resolution.direct = { pubkey: DEFAULT_SERVER_PUBKEY, relays: DEFAULT_SERVER_RELAYS };
+    resolution.direct = {
+      npub: DEFAULT_SERVER_NPUB,
+      pubkey: DEFAULT_SERVER_PUBKEY,
+      relays: DEFAULT_SERVER_RELAYS,
+    };
   }
 
   // --- path 2: public, via the CEP-6 announcement cache -------------------

@@ -64,7 +64,8 @@ setsid kehto paja \
   --host 127.0.0.1 --port "$PAJA_PORT" \
   --relay-mode live "${RELAY_ARGS[@]}" \
   --acl-mode allow --storage-mode memory --cache-mode memory \
-  -- pnpm --dir napplet vite --host 127.0.0.1 --port "$VITE_PORT" \
+  --ready-timeout 60000 \
+  -- bash -lc "cd '$REPO/napplet' && exec pnpm vite --host 127.0.0.1 --port $VITE_PORT" \
   >"$RUN_DIR/paja.log" 2>&1 </dev/null &
 for _ in $(seq 1 60); do
   curl -sf -o /dev/null "http://127.0.0.1:${PAJA_PORT}/" && break
@@ -77,10 +78,15 @@ echo "== 3/3 write runtime facts =="
 python3.13 - "$SERVER_NPUB" "$PAJA_PORT" "$RUN_DIR" <<'PY'
 import json, pathlib, sys
 npub, port, run_dir = sys.argv[1], sys.argv[2], sys.argv[3]
+# The address a human writes is an npub; what the shell's cvm.callTool needs is
+# the hex. Record both so the spec never has to convert (or guess).
+from nostr_sdk import PublicKey
+hexpk = PublicKey.parse(npub).to_hex()
 out = pathlib.Path("napplet/e2e/.e2e-env.json")
 out.parent.mkdir(parents=True, exist_ok=True)
 out.write_text(json.dumps({
     "server_npub": npub,
+    "server_pubkey_hex": hexpk,
     "paja_url": f"http://127.0.0.1:{port}/",
     "run_dir": run_dir,
     "relays": ["wss://relay.contextvm.org", "wss://relay2.contextvm.org", "wss://relay.primal.net"],

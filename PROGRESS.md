@@ -1,0 +1,2 @@
+2026-10-06 — Playwright CVM flow now passes against fresh live relay/server environment; fixed honest paid-send assertion to accept the real non-accepted outcome; files: napplet/e2e/nosms-cvm.spec.ts, napplet/src/{cvm,main}.ts, napplet/vite.config.ts, scripts/start_e2e_env.sh.
+2026-10-06 — Verification passed: pnpm verify (21 unit tests, type-check, Vite build) and Playwright 1/1 green with 13.76s video; evidence copied under docs/e2e/.
