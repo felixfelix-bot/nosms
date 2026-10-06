@@ -32,7 +32,7 @@ from .pricing import InvalidDestination, normalize_e164, price_for
 from .quota import QuotaError, QuotaStore
 from .refunds import refund_all
 from .transports import (EmailGatewayTransport, FakeTransport, TelnyxTransport,
-                         maybe_await)
+                         WhatsAppTransport, maybe_await)
 
 
 def build_transport(cfg: Config):
@@ -47,6 +47,10 @@ def build_transport(cfg: Config):
             return TelnyxTransport(provider=None, api_key="", from_number="")
     if name in ("email", "email_gateway"):
         return EmailGatewayTransport()
+    if name in ("whatsapp", "wa"):
+        # ADR-0003: the official Android client over adb. Built from Config so the
+        # NOSMS_WHATSAPP_* values have exactly one reader.
+        return WhatsAppTransport.from_service_config(cfg)
     return FakeTransport()
 
 

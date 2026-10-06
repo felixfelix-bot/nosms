@@ -19,7 +19,7 @@ CVM_NSEC            server private key (nsec or hex). Generated + written to
                     restart keeps the same npub.
 CVM_OWNER_PUBKEYS   comma-separated hex pubkeys that send free (the operator).
 NOSMS_MINT_URL      mint every postage token is escrowed against.
-NOSMS_TRANSPORT     rail name: jmp | email_gateway | fake.
+NOSMS_TRANSPORT     rail name: jmp | email_gateway | telnyx | whatsapp | fake.
 CVM_BTC_USD         live BTC/USD used by sms.pricing for the quote.
 
 Protocol notes measured 2026-10-04/05 (python nostr_sdk 0.44.x):
@@ -105,6 +105,11 @@ def build_transport(name: str):
         from app.transports import TelnyxTransport
         return TelnyxTransport.from_config(os.environ.get(
             "NOSMS_SMS_GATEWAY_PATH", "~/repos/sms-gateway"))
+    if name in ("whatsapp", "wa"):
+        # ADR-0003. Unknown names must not fall through to the test double: a
+        # rail we cannot build is a rail we must not describe.
+        from app.transports import WhatsAppTransport
+        return WhatsAppTransport.from_env()
     from app.transports import FakeTransport
     return FakeTransport()
 
