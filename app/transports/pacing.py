@@ -42,6 +42,15 @@ back a *full* daily cap — the unsafe direction for an abuse surface. It now fa
 **closed**: every claim is refused with ``pacing_state_corrupt`` until an operator
 clears the file, and the unreadable bytes are left in place so the failure is
 visible.
+
+One counter per line
+--------------------
+:func:`load_pacing_policy` is the JMP rail's policy; :func:`load_whatsapp_pacing_policy`
+is the WhatsApp rail's (ADR-0003). Two rails, two personal lines, two abuse
+surfaces, two counters — sharing one would let a burst on one line consume the
+other's allowance while the other line's cap quietly stopped being enforced.
+The two policies are structurally identical; only the knob names and the
+defaults differ.
 """
 from __future__ import annotations
 
@@ -53,7 +62,8 @@ import time
 import uuid
 from dataclasses import asdict, dataclass
 
-__all__ = ["PacingPolicy", "PacingDecision", "Pacer", "load_pacing_policy"]
+__all__ = ["PacingPolicy", "PacingDecision", "Pacer", "load_pacing_policy",
+           "load_whatsapp_pacing_policy"]
 
 #: Reasons a claim can be refused, in the order they are evaluated.
 #: ``pacing_state_corrupt`` is terminal until a human clears the state file.
@@ -336,4 +346,25 @@ def load_pacing_policy(env: dict | None = None) -> PacingPolicy:
         daily_cap=int(e.get("NOSMS_JMP_DAILY_CAP", "20")),
         min_gap_seconds=float(e.get("NOSMS_JMP_MIN_GAP_SECONDS", "60")),
         max_gap_seconds=float(e.get("NOSMS_JMP_MAX_GAP_SECONDS", "300")),
+    )
+
+
+def load_whatsapp_pacing_policy(env: dict | None = None) -> PacingPolicy:
+    """Build the WhatsApp rail's policy from env (ADR-0003 control #2).
+
+    Its own knobs and its own state file, on purpose: the JMP line and the
+    WhatsApp line are separate abuse surfaces, and one shared counter would
+    meter the wrong line. See the module docstring.
+
+    The defaults are **tighter** than the JMP rail's. On WhatsApp the operator's
+    own account is the thing a burst can cost, and the ADR records that a
+    detected ban is the accepted risk: a handful of sends an hour, drawn from a
+    jittered window, is the shape of a person. ``max_gap_seconds`` is wider than
+    JMP's so the average rate stays low even at the cap.
+    """
+    e = os.environ if env is None else env
+    return PacingPolicy(
+        daily_cap=int(e.get("NOSMS_WHATSAPP_DAILY_CAP", "10")),
+        min_gap_seconds=float(e.get("NOSMS_WHATSAPP_MIN_GAP_SECONDS", "120")),
+        max_gap_seconds=float(e.get("NOSMS_WHATSAPP_MAX_GAP_SECONDS", "600")),
     )
