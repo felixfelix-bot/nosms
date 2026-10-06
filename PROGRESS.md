@@ -11,3 +11,7 @@ base: eab350b (merged WhatsApp rail, ADR-0003)
 - T4 scope decided: own pacing knobs for the WhatsApp rail (NOSMS_WHATSAPP_*), fail-loud
   ban/rate-limit with latch+alert, FailoverTransport must survive a primary that RAISES,
   HTTP 429 rail_paced + Retry-After / 503 rail_unavailable, docs honesty.
+- cluster 2 DONE: pacing loader + WhatsApp rail pacer injection (claim/release, RailPaced),
+  ban/unregistered => halt() latches + persists + CRITICAL alert + hook, rate_limited =>
+  loud RailUnavailable without latching, halt file fails closed, clear_halt operator path.
+  88 tests green in test_whatsapp_transport.py + test_pacing.py.
