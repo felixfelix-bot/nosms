@@ -1,0 +1,155 @@
+E1 EVIDENCE — nosms WhatsApp emulator harness, DQ05
+Task: t_abd9e766   Host: dq05 = c03rad0r-DQ05proplus   Run date: 2026-10-06 (UTC times below)
+Operator: worker-dq05 (executed over ssh from CobradorWave; all installs landed on dq05 ONLY)
+
+================================================================================
+[STEP 1] PREFLIGHT GATE — ALL FOUR GATES PASS
+================================================================================
+$ ssh dq05 'test -c /dev/kvm && python3 -c "import os; os.close(os.open(\"/dev/kvm\", os.O_RDWR)); print(\"KVM openable: True\")"
+KVM openable: True                                     GATE 1 PASS (/dev/kvm char dev, O_RDWR open)
+
+$ ssh dq05 'df -BG /'
+Filesystem     1G-blocks  Used Available Use% Mounted on
+/dev/sda2           468G  364G       81G  82% /         GATE 2 PASS (81G avail >= 15G)
+
+$ ssh dq05 'free -g'
+               total        used        free      shared  buff/cache   available
+Mem:              10           3           2           0           5           7
+Swap:             37           1          35                    GATE 3 PASS (7G avail >= 4G)
+
+$ ssh dq05 'curl -sI -o /dev/null -w "%{http_code}" https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip'
+dl.google.com status: 200                             GATE 4 PASS (HTTP 200)
+
+Host identity / groups:
+c03rad0r-DQ05proplus  Linux 6.17.0-41-generic x86_64  nproc=4
+uid=1000(c03rad0r) groups=...,122(docker),127(libvirt),992(kvm),27(sudo)
+
+================================================================================
+[STEP 2] SDKMANAGER INSTALL — SUCCEEDED (XML v4 warning observed, NOT fatal)
+================================================================================
+Observed on every sdkmanager invocation (reported verbatim, install still worked):
+  Warning: This version only understands SDK XML versions up to 3 but an SDK XML file of
+  version 4 was encountered. This can happen if you use versions of Android Studio and the
+  command-line tools that were released at different times.
+Commandline-tools were NOT upgraded: sdkmanager 12.0 completed the install despite the
+warning, so the contingency in the card ("upgrade commandlinetools") was not required.
+
+$ sdkmanager --sdk_root=$HOME/Android/Sdk platform-tools emulator "system-images;android-34;google_apis_playstore;x86_64"
+
+$ sdkmanager --list_installed | grep -E "emulator|platform-tools|system-images"
+  emulator                                              | 37.2.12       | Android Emulator                           | emulator
+  platform-tools                                        | 37.0.1        | Android SDK Platform-Tools                 | platform-tools
+  system-images;android-34;google_apis_playstore;x86_64 | 14            | Google Play Intel x86_64 Atom System Image | system-images/android-34/google_apis_playstore/x86_64
+
+Binaries:
+  Android emulator version 37.2.12.0 (build_id 16428233)
+  Android Debug Bridge version 1.0.41  (Version 37.0.1-15733141)
+
+NOTE / CORRECTION TO CARD PREMISE: platform-tools was NOT actually missing — adb already
+existed at $HOME/Android/Sdk/platform-tools/adb (dated 2025-07-06). sdkmanager refreshed it
+to 37.0.1. The genuinely missing packages were `emulator` and the system image.
+
+Raw install log kept on host: /tmp/e1_install.log  (17246 bytes)
+
+================================================================================
+[STEP 3] avdmanager create avd — wa-dev CREATED
+================================================================================
+$ echo no | avdmanager create avd -n wa-dev -k "system-images;android-34;google_apis_playstore;x86_64" -d pixel_6 --force
+Auto-selecting single ABI x86_64
+(warning about SDK XML version 4 repeated; creation succeeded)
+
+$ avdmanager list avd
+Available Android Virtual Devices:
+    Name: wa-dev
+  Device: pixel_6 (Google)
+    Path: /home/c03rad0r/.android/avd/wa-dev.avd
+  Target: Google Play (Google Inc.)
+          Based on: Android 14.0 ("UpsideDownCake") Tag/ABI: google_apis_playstore/x86_64
+  Sdcard: 512 MB
+
+config.ini highlights: abi.type=x86_64  hw.cpu.ncore=2  hw.ramSize=1536M  tag.id=google_apis_playstore
+                       image.sysdir.1=system-images/android-34/google_apis_playstore/x86_64/
+                       PlayStore.enabled = no      <-- FLAGGED FOR E2 (see handoff comment)
+
+================================================================================
+[STEP 4] emulator -accel-check — KVM ACCELERATION CONFIRMED
+================================================================================
+$ cd $HOME/Android/Sdk/emulator && ./emulator -accel-check
+accel:
+0
+KVM (version 12) is installed and usable.
+accel
+exit=0
+
+(/dev/kvm = crw-rw----+ root:kvm, user c03rad0r in group 992(kvm))
+
+================================================================================
+[STEP 5] HEADLESS BOOT PROOF — sys.boot_completed == 1 (NOT a sleep-based claim)
+================================================================================
+Launch (on dq05, background, nohup):
+$ $HOME/Android/Sdk/emulator/emulator -avd wa-dev -no-window -no-audio -no-snapshot \
+      -gpu swiftshader_indirect -no-metrics -no-boot-anim
+  emulator pid 3906395 -> qemu-system-x86_64-headless (confirmed in ps)
+
+Boot poll — wait-for-device then loop on the getprop, no bare sleep:
+  adb wait-for-device
+  for i in $(seq 1 55); do b=$(adb shell getprop sys.boot_completed | tr -d "\r"); \
+    echo "t=$((i*10))s boot_completed=[$b]"; [ "$b" = "1" ] && { echo BOOTED; break; }; sleep 10; done
+  t=10s boot_completed=[1]
+  BOOTED
+
+Independent confirmation:
+$ adb devices -l
+List of devices attached
+emulator-5554          device product:sdk_gphone64_x86_64 model:sdk_gphone64_x86_64 device:emu64xa transport_id:1
+
+$ adb shell getprop ...
+sys.boot_completed           = [1]
+dev.bootcomplete             = [1]
+ro.build.version.release     = [14]
+ro.build.version.sdk         = [34]
+ro.product.model             = [sdk_gphone64_x86_64]
+ro.product.cpu.abi           = [x86_64]
+
+$ adb shell uptime
+ 09:37:44 up 2 min,  0 users,  load average: 34.12, 9.58, 3.29
+
+$ adb shell echo SHELL_OK
+SHELL_OK                        <-- guest shell fully reachable
+
+================================================================================
+[VALIDATION] df -BG / delta  and  TEARDOWN / REAPER
+================================================================================
+df -BG / :  09:26 (preflight, before install)   468G  364G   81G  82%   avail=81G
+            09:37 (emulator up, before teardown) 468G  369G   75G  84%   avail=75G
+            09:38 (after teardown)              468G  372G   73G  84%   avail=73G
+  Delta preflight -> settled = 81G - 73G = 8 GB available consumed.
+  (Guest wrote ~2 GB of overlay/scratch during boot beyond the static downloads; the box also
+   runs other load — only the du-attributable footprint below is unambiguously ours.)
+
+Attributable footprint (du -sh):
+  /home/c03rad0r/Android/Sdk/emulator                                             863M
+  /home/c03rad0r/Android/Sdk/system-images                                        3.1G
+  /home/c03rad0r/Android/Sdk/platform-tools                                        22M
+  /home/c03rad0r/.android/avd  (wa-dev.avd incl. boot-completed userdata)         892M
+  --------------------------------------------------------------------------------------
+  total clean footprint                                                            ~4.9G
+
+Peak RAM held by the guest:  qemu-system-x86_64 RSS 3267908 KB (3.27 GB, 28.5 % of RAM)
+                             host `free -g` available fell 7G -> 5G
+                             host loadavg rose to 7.86, IO PSI some avg10=53.79
+
+TEARDOWN performed at end of run (the box is 4-core and already loaded; orphaning a 3.3 GB
+guest was not acceptable), then reaped:
+$ adb -s emulator-5554 emu kill
+OK: killing emulator, bye bye
+OK
+$ pgrep -af "qemu-system|emulator -avd"
+REAPER CLEAN: no qemu/emulator processes
+$ adb kill-server
+$ free -g   -> available back to 7G ; loadavg 6.91 6.02 5.04
+
+================================================================================
+VERDICT: E1 COMPLETE. All 4 preflight gates pass; toolchain installed; AVD created;
+accel-check reports KVM usable; guest reached sys.boot_completed=1 with a live adb shell;
+no orphaned processes left. Zero writes to nosms; no repo commits; installs confined to dq05.
