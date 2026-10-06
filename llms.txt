@@ -117,6 +117,19 @@ Config-driven, per key:
 - per-destination cooldown: 60 s → `429 destination_cooldown`
 - daily cap: 100 messages / rolling 24 h → `429 daily_cap_reached`
 
+**The rail is a second, independent gate.** Every rail rides a *personal* line,
+so volume is the abuse surface: a persisted daily cap plus a jittered minimum
+gap, enforced by the rail itself, against the rail's own counter.
+
+- the rail is pacing → `429` `rail_paced` **and a `Retry-After` header**. The
+  message was never attempted (no slot was consumed), so the postage is refunded
+  and you come back after the indicated wait.
+- the rail has stopped (a detected ban / a terminated or unregistered line) →
+  `503` `rail_unavailable`. There is no `Retry-After`: this is not a "come back
+  soon", it is a rail that a human has to clear. The postage is refunded.
+
+Both are refund events — nothing was sent — and neither is ever charged for.
+
 ## Pricing (sats, per message)
 
 Prices are charged in satoshis. The unit is sats — there is no fiat billing.
@@ -153,6 +166,7 @@ Tokens you can rely on: `bad_request`, `auth_missing`, `auth_invalid`,
 `token_missing`, `token_invalid`, `token_unsupported`, `token_empty`,
 `token_wrong_mint`, `token_already_spent`, `token_state_unknown`,
 `insufficient_funds`, `destination_cooldown`, `daily_cap_reached`,
+`rail_paced`, `rail_unavailable`,
 `mint_error`, `mint_unreachable`, `transport_error`, `not_refunded`,
 `invalid_request`, `not_found`, `method_not_allowed`,
 `llms_full_not_implemented`, `internal_error`.

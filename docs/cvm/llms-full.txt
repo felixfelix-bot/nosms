@@ -172,7 +172,23 @@ The HTTP surface carries the same vocabulary as `X-Reason` / `X-Hint` headers.
    guarantee coverage.
 5. **Termination risk.** The rail is a personal consumer line used as a paid
    service against its operator's automation policy. It can be terminated at any
-   time; pricing and the degrade path to the email rail are the mitigations.
+   time; pricing and the degrade path to the email rail are the mitigations. On
+   the WhatsApp rail (ADR-0003) this is the operator's explicitly accepted risk.
+6. **Volume is paced, per rail.** Each rail carries its own persisted counter — a
+   daily cap plus a re-jittered minimum gap (`NOSMS_JMP_*` for the JMP line,
+   `NOSMS_WHATSAPP_*` for the WhatsApp line: two lines, two counters, never one
+   shared counter). A paced call is `rail_paced`: the message was not attempted,
+   so it is not charged, and the HTTP surface answers `429` with `Retry-After`.
+7. **A detected ban stops the rail, loudly.** The WhatsApp rail latches itself
+   off, persists the halt (a restart must not become the retry), logs
+   `CRITICAL` and alerts; every later send raises `rail_unavailable` with
+   `terminated` (banned) or `auth_failed` (unregistered client) and **never
+   retries** — a retry loop is what turns a ban warning into a permanent ban. A
+   human clears the halt to resume.
+8. **The serving rail is a config choice.** `NOSMS_TRANSPORT=whatsapp` (the paced
+   rail alone) or `NOSMS_TRANSPORT=whatsapp_email` (the same rail with the
+   ADR-0002 email degrade path behind it); `sms.capabilities` always reports the
+   rail that is actually serving.
 
 ## 7. Data handling
 
@@ -193,5 +209,6 @@ The client and the server MUST use different nostr keys: a shared key makes the
 client receive its own gift-wrapped requests and the response correlation breaks.
 
 ---
-*Manual version: v2 (2026-10-05). The authoritative values are always the live
-`sms.pricing` and `sms.capabilities` responses.*
+*Manual version: v3 (2026-10-06). The authoritative values are always the live
+`sms.pricing` and `sms.capabilities` responses. v3 adds the per-rail pacing gate
+and the loud-stop rule (T4 of ADR-0003).*

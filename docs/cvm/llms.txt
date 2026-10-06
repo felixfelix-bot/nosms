@@ -81,6 +81,37 @@ countries:          [US, CA]
 Do not build delivery-dependent logic (OTP confirmation, escrow release on
 delivery) on this rail.
 
+### Rails, and what each one may claim
+
+The service ships one rail per deployment; the contract always describes the
+rail that is actually serving, and `sms.capabilities` is the live answer.
+
+- **JMP/Cheogram** — the v1 default (ADR-0002): one personal line, `[US, CA]`.
+- **WhatsApp** (`NOSMS_TRANSPORT=whatsapp`, ADR-0003) — the official Android
+  client driven over `adb` on the operator's own number. `delivery_receipts` is
+  `false` there **permanently** and no `receipt` is ever returned: a scraped
+  "delivered" tick is downgraded to `sent`, because pixels on a guest we control
+  are not a delivery proof. `countries` is `["*"]` (WhatsApp is global). The ToS
+  collision and the operator's accepted ban risk are recorded in
+  `docs/adr/0003-whatsapp-rail.md`; `NOSMS_TRANSPORT=whatsapp_email` adds the
+  ADR-0002 email degrade path behind the same rail.
+
+### Volume is the abuse surface (both rails)
+
+Every rail rides a personal line, so each one is paced by its **own** persisted
+counter — a hard daily cap plus a re-jittered minimum gap —
+
+- a paced call is `rail_paced`: the message was never attempted, so nothing is
+  charged; wait and retry (the HTTP surface answers `429` + `Retry-After`).
+- a rail that has **stopped** (a detected ban, or an unregistered client on the
+  WhatsApp rail) reports `rail_unavailable` with a terminal reason
+  (`terminated` / `auth_failed`) and is **never retried**. The rail latches
+  itself off — persisted, so a restart is not a retry — and shouts in the logs.
+  An operator clears it; a caller should refund and branch on the reason.
+
+Nothing is ever silently retried, and neither shape is billed: a message that was
+not attempted may not be charged for.
+
 ## Payment (CEP-8)
 
 - Gating: `explicit_gating` — nothing is sent before payment lands. An unpaid
@@ -120,6 +151,6 @@ Destination numbers and message bodies are retained only for status lookups and
 refunds. No marketing use, no third-party sharing, no analytics.
 
 ---
-*Contract version: v2 (2026-10-05). Owned by the operator; the v1 rail is the
+*Contract version: v3 (2026-10-06). Owned by the operator; the v1 rail is the
 operator's own personal line, sold as a risk-priced service — treat volume limits
-as real.*
+as real. v3 adds the rails' pacing gate and the loud stop (T4 of ADR-0003).*

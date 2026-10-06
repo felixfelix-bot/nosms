@@ -24,3 +24,7 @@ base: eab350b (merged WhatsApp rail, ADR-0003)
 - KNOWN RED (expected, this IS the deliverable): test_llms_artifact
   ::test_every_emitted_x_reason_token_is_documented now fails naming
   ['rail_paced','rail_unavailable'] -> docs cluster next.
+- cluster 6 DONE: app/llms.py (render -> llms.txt), docs/cvm/llms.txt (rails + pacing/stop
+  section, footer v3), docs/cvm/llms-full.txt (limits 6/7/8, footer v3), ADR-0003 consequences
+  1+5 marked landed; parity tests strengthened (REQUIRED += rail_paced/rail_unavailable/
+  Retry-After; test_cvm_contract += rails+gates, ban-stop-rule).

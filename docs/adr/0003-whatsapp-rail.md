@@ -105,9 +105,12 @@ actually demonstrate, not by what would be convenient:
 **Negative / accepted risks (named, not hidden)**
 
 1. **Ban / account termination.** The risk the operator accepted. A detected ban must fail loudly and
-   stop — never retry, because a retry loop is what turns a warning into a permanent ban. (The
-   fail-loud alerting/kill-switch and the pacing hook land in T4; this rail raises the shared
-   `RailUnavailable("terminated", …)` so the caller can branch.)
+   stop — never retry, because a retry loop is what turns a warning into a permanent ban. **Landed
+   (T4):** this rail raises the shared `RailUnavailable("terminated", …)` and, in the same act,
+   latches itself off, **persists** the halt (`NOSMS_WHATSAPP_HALT_STATE`, so a restart is not the
+   retry this bullet forbids) and alerts on a `CRITICAL` log line (plus an optional injected
+   notifier). Every later send raises before touching the emulator. `whatsapp_email` puts the email
+   rail behind it as the ADR-0002 degrade path; `whatsapp` alone reports the stop to the caller.
 2. **It rides the operator's personal line.** Account loss is not merely a service outage.
 3. **Correlated failure with the JMP rail.** ADR-0002 already made the operator's personal JMP line
    the v1 rail of the paid service. Sending WhatsApp over the *same* number means one ban can take
@@ -117,7 +120,10 @@ actually demonstrate, not by what would be convenient:
    WhatsApp changes on its own release cadence. No test may depend on a live emulator — that is why
    the driver is injected and every test runs offline against a double.
 5. **Volume is the abuse surface.** A burst is what trips WhatsApp's anti-abuse gate. Pacing
-   (ADR-0002 compensating control #2) must be wired to this rail before it carries real traffic.
+   (ADR-0002 compensating control #2) is **wired (T4)**: the rail reserves a slot on its own
+   persisted daily cap + jittered minimum gap (`NOSMS_WHATSAPP_DAILY_CAP` /
+   `NOSMS_WHATSAPP_MIN_GAP_SECONDS` / `NOSMS_WHATSAPP_MAX_GAP_SECONDS`, its own state file — never
+   the JMP counter). A paced call defers (`RailPaced` → `429` + `Retry-After`), it never fails.
 6. **No delivery claims, ever.** Anything downstream that needs delivery must not use this rail.
 
 ## Alternatives considered
