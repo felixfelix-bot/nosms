@@ -118,6 +118,35 @@ def test_docs_tool_serves_these_exact_files():
     assert t.docs_tool("llms-full") == CVM_FULL.read_text()
 
 
+def test_the_contract_files_advertise_the_rails_and_their_gates():
+    """T4: adding a rail changes what the contract may advertise.
+
+    The WhatsApp rail (ADR-0003) rides a second personal line, so the contract
+    has to name the rails, the pacing gate (`rail_paced` + `Retry-After`) and the
+    loud stop (`rail_unavailable`, never retried). Both documents are checked:
+    `llms.txt` is the contract and `llms-full.txt` is the manual served by
+    `docs` / `llms-full`.
+    """
+    contract = CVM_LLMS.read_text()
+    manual = CVM_FULL.read_text()
+    for body in (contract, manual):
+        assert "rail_paced" in body
+        assert "rail_unavailable" in body
+        assert "whatsapp" in body.lower()
+    assert "Retry-After" in contract
+    assert "never retried" in contract
+    # the honesty rule that survives the new rail: no delivery claims, ever
+    assert "delivery_receipts" in contract and "delivery_receipts" in manual
+
+
+def test_the_manual_documents_the_ban_stop_rule():
+    """A halting rail must be documented, not discovered (ADR-0003)."""
+    manual = CVM_FULL.read_text()
+    assert "stops the rail" in manual          # the loud stop
+    assert "persists the halt" in manual       # survives a restart
+    assert "retry loop" in manual              # and why it is never retried
+
+
 def test_the_announced_server_name_is_the_one_in_the_contract():
     assert SERVER_NAME in CVM_LLMS.read_text()
     assert tools().server_announcement()["name"] == SERVER_NAME

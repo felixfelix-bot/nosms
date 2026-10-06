@@ -22,13 +22,17 @@ import pytest
 
 from app.config import Config
 from app.transports.base import NORMALIZED_STATUSES, Pollable, Transport
-from app.transports.errors import RailUnavailable, UnsupportedDestination
+from app.transports.errors import RailPaced, RailUnavailable, UnsupportedDestination
 from app.transports.whatsapp import (
     UI_STATUS_MAP,
     AdbWhatsAppDriver,
+    HaltRecord,
     WhatsAppConfig,
     WhatsAppTransport,
+    clear_halt,
+    load_halt,
     normalize_ui_status,
+    write_halt,
 )
 
 
@@ -485,6 +489,19 @@ def test_registry_still_refuses_an_unknown_rail():
         build_transport("carrier-pigeon")
 
 
+def test_registry_offers_the_whatsapp_rail_with_the_email_degrade_path():
+    """The same composition `jmp_cheogram` uses, for the ADR-0003 rail."""
+    from app.transports import build_transport
+    from app.transports.failover import FailoverTransport
+    t = build_transport("whatsapp_email",
+                        env={"NOSMS_WHATSAPP_SERIAL": "emulator-5554"})
+    assert isinstance(t, FailoverTransport)
+    assert isinstance(t.primary, WhatsAppTransport)
+    assert t.primary.pacer is not None          # paced, like the plain rail
+    assert t.fallback.name == "email_gateway"
+    assert t.name == "failover:whatsapp->email_gateway"
+
+
 def test_http_service_build_transport_selects_the_whatsapp_rail():
     from app.main import build_transport as http_build
     cfg = Config.from_env({"NOSMS_TRANSPORT": "whatsapp",
@@ -497,6 +514,268 @@ def test_http_service_build_transport_selects_the_whatsapp_rail():
 def test_the_http_services_rail_is_still_the_fake_by_default():
     from app.main import build_transport as http_build
     assert http_build(Config.from_env({})).name == "fake"
+
+
+# --- T4: the pacing hook (ADR-0003 control #2) -------------------------------
+#
+# The rail rides the operator's PERSONAL line, so volume is the abuse surface. A
+# paced call DEFERS — it is not a failure, and it must not consume a slot that a
+# later caller could have used.
+
+def _paced(driver=None, **policy_kw):
+    from app.transports.pacing import Pacer, PacingPolicy
+    policy = PacingPolicy(**policy_kw)
+    pacer = Pacer(policy)
+    rail = WhatsAppTransport(driver if driver is not None else FakeDriver(),
+                             config=WhatsAppConfig(serial="emulator-5554"),
+                             pacer=pacer)
+    return rail, pacer
+
+
+def test_a_paced_call_defers_and_never_touches_the_device():
+    rail, pacer = _paced(daily_cap=5, min_gap_seconds=60, max_gap_seconds=60)
+    pacer.record_send()                      # the gap is now armed
+    driver = rail._driver
+    with pytest.raises(RailPaced) as excinfo:
+        rail.send("+155****4567", "hello")
+    assert excinfo.value.reason == "min_gap"
+    assert excinfo.value.retry_after > 0
+    assert driver.sent == []                 # never attempted
+    assert pacer.snapshot()["state"]["count"] == 1   # and no slot was eaten
+
+
+def test_a_paced_call_at_the_daily_cap_defers_with_a_retry_after():
+    rail, pacer = _paced(daily_cap=1, min_gap_seconds=0, max_gap_seconds=0)
+    pacer.record_send()
+    with pytest.raises(RailPaced) as excinfo:
+        rail.send("+155****4567", "hello")
+    assert excinfo.value.reason == "daily_cap_reached"
+    assert excinfo.value.retry_after > 0
+    assert rail._driver.sent == []
+
+
+def test_an_accepted_send_reserves_and_confirms_exactly_one_slot():
+    rail, pacer = _paced(daily_cap=2, min_gap_seconds=0, max_gap_seconds=0)
+    assert rail.send("+155****4567", "one").accepted is True
+    state = pacer.snapshot()["state"]
+    assert state["count"] == 1
+    assert state["pending"] is False
+
+
+def test_a_refused_send_gives_the_slot_back():
+    """The message never left the client, so it must not consume the allowance."""
+    rail, pacer = _paced(FakeDriver(ui_state="failed"),
+                         daily_cap=1, min_gap_seconds=0, max_gap_seconds=0)
+    assert rail.send("+155****4567", "one").accepted is False
+    assert pacer.snapshot()["state"]["count"] == 0
+
+
+def test_a_device_crash_gives_the_slot_back():
+    rail, pacer = _paced(FakeDriver(raises=RuntimeError("device offline")),
+                         daily_cap=1, min_gap_seconds=0, max_gap_seconds=0)
+    assert rail.send("+155****4567", "one").accepted is False
+    assert pacer.snapshot()["state"]["count"] == 0
+
+
+def test_the_counted_send_is_the_one_that_was_confirmed():
+    rail, pacer = _paced(daily_cap=1, min_gap_seconds=0, max_gap_seconds=0)
+    assert rail.send("+155****4567", "one").accepted is True
+    with pytest.raises(RailPaced):           # the cap is now real
+        rail.send("+155****4567", "two")
+    assert rail._driver.sent == [("+155****4567", "one")]
+
+
+def test_from_env_builds_the_rail_with_its_own_pacing_knobs(tmp_path):
+    t = WhatsAppTransport.from_env({
+        "NOSMS_WHATSAPP_SERIAL": "emulator-5554",
+        "NOSMS_WHATSAPP_DAILY_CAP": "3",
+        "NOSMS_WHATSAPP_MIN_GAP_SECONDS": "5",
+        "NOSMS_WHATSAPP_MAX_GAP_SECONDS": "7",
+        "NOSMS_WHATSAPP_PACING_STATE": str(tmp_path / "wa_pacing.json"),
+    }, halt_path=None)
+    assert t.pacer is not None
+    assert (t.pacer.policy.daily_cap, t.pacer.policy.min_gap_seconds,
+            t.pacer.policy.max_gap_seconds) == (3, 5.0, 7.0)
+
+
+def test_the_registry_injects_a_pacer_into_the_whatsapp_rail():
+    from app.transports import build_transport
+    t = build_transport("whatsapp")
+    assert isinstance(t, WhatsAppTransport)
+    assert t.pacer is not None               # the personal line is protected
+
+
+# --- T4: ban handling — fail loudly, stop, alert, never retry ----------------
+
+def test_a_ban_latches_the_rail_off_so_it_reports_itself_unavailable():
+    t, _ = _configured(FakeDriver(ui_state="banned"))
+    with pytest.raises(RailUnavailable):
+        t.send("+155****4567", "hello")
+    assert t.down_reason == "terminated"
+    assert t.capabilities.available is False
+    flags = t.capability_flags()
+    assert flags["halted"] is True and flags["down_reason"] == "terminated"
+
+
+def test_a_latched_rail_never_touches_the_device_again():
+    """The whole point: no code path can turn a ban into a retry loop."""
+    driver = FakeDriver(ui_state="banned")
+    t, _ = _configured(driver)
+    with pytest.raises(RailUnavailable):
+        t.send("+155****4567", "one")
+    assert len(driver.sent) == 1
+    for _ in range(3):
+        with pytest.raises(RailUnavailable) as excinfo:
+            t.send("+155****4567", "again")
+        assert excinfo.value.reason == "terminated"
+    assert len(driver.sent) == 1             # exactly one attempt, ever
+
+
+def test_a_transient_driver_failure_does_not_latch_the_rail():
+    t, _ = _configured(FakeDriver(raises=RailUnavailable("not_connected", "no device")))
+    with pytest.raises(RailUnavailable):
+        t.send("+155****4567", "hello")
+    assert t.down_reason is None             # a reconnect window is not a ban
+    assert t.capabilities.available is True
+
+
+def test_the_ban_alert_is_loud_and_calls_the_injected_notifier(caplog):
+    seen = []
+    t = WhatsAppTransport(FakeDriver(ui_state="banned"),
+                          config=WhatsAppConfig(serial="emulator-5554"),
+                          alert=lambda reason, detail: seen.append((reason, detail)))
+    with caplog.at_level("CRITICAL"):
+        with pytest.raises(RailUnavailable):
+            t.send("+155****4567", "hello")
+    assert seen and seen[0][0] == "terminated" and seen[0][1]
+    assert any("STOPPED" in r.message for r in caplog.records)
+    assert any(r.levelname == "CRITICAL" for r in caplog.records)
+
+
+def test_an_alert_hook_that_raises_does_not_hide_the_ban():
+    def explode(reason, detail):
+        raise RuntimeError("notifier down")
+
+    t = WhatsAppTransport(FakeDriver(ui_state="banned"),
+                          config=WhatsAppConfig(serial="emulator-5554"),
+                          alert=explode)
+    with pytest.raises(RailUnavailable) as excinfo:
+        t.send("+155****4567", "hello")
+    assert excinfo.value.reason == "terminated"
+
+
+def test_a_detected_rate_limit_fails_loudly_and_is_not_retried():
+    driver = FakeDriver(ui_state="rate_limited")
+    t, _ = _configured(driver)
+    with pytest.raises(RailUnavailable) as excinfo:
+        t.send("+155****4567", "hello")
+    assert excinfo.value.reason == "rate_limited"
+    assert len(driver.sent) == 1             # the send is not re-attempted
+    # Throttling is a warning, not a death: the rail stays usable for later.
+    assert t.down_reason is None
+
+
+def test_a_rate_limit_never_becomes_a_failed_send_result():
+    """A throttled line must not be flattened into one more reversible failure."""
+    t, _ = _configured(FakeDriver(ui_state="rate_limited"))
+    with pytest.raises(RailUnavailable):
+        t.send("+155****4567", "hello")
+    assert t.down_reason is None
+
+
+# --- T4: the halts that must survive a restart --------------------------------
+
+def test_the_halt_is_persisted_so_a_restart_is_not_a_retry(tmp_path):
+    halt = tmp_path / "whatsapp_halt.json"
+    driver = FakeDriver(ui_state="banned")
+    first = WhatsAppTransport(driver, config=WhatsAppConfig(serial="emulator-5554"),
+                              halt_path=str(halt))
+    with pytest.raises(RailUnavailable):
+        first.send("+155****4567", "hello")
+    assert halt.is_file()
+
+    # a new process (a new rail) reading the same file stays stopped
+    driver2 = FakeDriver()
+    second = WhatsAppTransport(driver2, config=WhatsAppConfig(serial="emulator-5554"),
+                               halt_path=str(halt))
+    assert second.down_reason == "terminated"
+    assert second.capabilities.available is False
+    with pytest.raises(RailUnavailable) as excinfo:
+        second.send("+155****4567", "hello")
+    assert excinfo.value.reason == "terminated"
+    assert driver2.sent == []                # the emulator is never touched
+
+
+def test_an_unregistration_is_persisted_too(tmp_path):
+    halt = tmp_path / "halt.json"
+    t = WhatsAppTransport(FakeDriver(ui_state="unregistered"),
+                          config=WhatsAppConfig(serial="emulator-5554"),
+                          halt_path=str(halt))
+    with pytest.raises(RailUnavailable) as excinfo:
+        t.send("+155****4567", "hello")
+    assert excinfo.value.reason == "auth_failed"
+    assert load_halt(str(halt)) is not None
+    assert load_halt(str(halt)).reason == "auth_failed"
+
+
+def test_an_unreadable_halt_file_fails_closed(tmp_path):
+    halt = tmp_path / "halt.json"
+    halt.write_text("{ not json")
+    t = WhatsAppTransport(FakeDriver(), config=WhatsAppConfig(serial="emulator-5554"),
+                          halt_path=str(halt))
+    assert t.down_reason == "halt_state_corrupt"
+    assert t.capabilities.available is False
+    with pytest.raises(RailUnavailable):
+        t.send("+155****4567", "hello")
+    assert t._driver.sent == []
+    assert halt.read_text() == "{ not json"   # left in place for a human
+
+
+def test_a_halt_file_with_no_reason_fails_closed(tmp_path):
+    halt = tmp_path / "halt.json"
+    halt.write_text("{}")
+    t = WhatsAppTransport(FakeDriver(), config=WhatsAppConfig(serial="emulator-5554"),
+                          halt_path=str(halt))
+    assert t.down_reason == "halt_state_corrupt"
+
+
+def test_a_halt_that_cannot_be_persisted_still_stops_the_rail(tmp_path, caplog):
+    """Losing the file must not lose the stop: the latch and alert still happen."""
+    ro = tmp_path / "read-only"
+    ro.mkdir()
+    ro.chmod(0o500)                          # can be listed, cannot be written
+    driver = FakeDriver(ui_state="banned")
+    t = WhatsAppTransport(driver, config=WhatsAppConfig(serial="emulator-5554"),
+                          halt_path=str(ro / "halt.json"))
+    assert t.down_reason is None             # nothing to read yet
+    with caplog.at_level("CRITICAL"):
+        with pytest.raises(RailUnavailable):
+            t.send("+155****4567", "hello")
+    assert t.down_reason == "terminated"
+    assert t.capabilities.available is False
+    assert any("could NOT persist" in r.message for r in caplog.records)
+
+
+def test_clear_halt_is_the_operator_way_back(tmp_path):
+    halt = tmp_path / "halt.json"
+    t = WhatsAppTransport(FakeDriver(ui_state="banned"),
+                          config=WhatsAppConfig(serial="emulator-5554"),
+                          halt_path=str(halt))
+    with pytest.raises(RailUnavailable):
+        t.send("+155****4567", "hello")
+    assert clear_halt(str(halt)) is True
+    assert clear_halt(str(halt)) is False     # idempotent for an operator
+
+    fresh = WhatsAppTransport(FakeDriver(), config=WhatsAppConfig(serial="emulator-5554"),
+                              halt_path=str(halt))
+    assert fresh.down_reason is None
+    assert fresh.send("+155****4567", "hello").accepted is True
+
+
+def test_load_halt_on_a_missing_or_disabled_path_is_none(tmp_path):
+    assert load_halt(None) is None
+    assert load_halt(str(tmp_path / "nope.json")) is None
+    assert write_halt(None, HaltRecord(reason="terminated")) is False
 
 
 def test_cvm_runner_builds_the_whatsapp_rail_and_never_falls_back_to_the_double():

@@ -63,6 +63,94 @@ def _email(smtp):
     return EmailGatewayTransport(smtp_factory=lambda *a, **k: smtp)
 
 
+# --- a primary that RAISES must behave like one that returns the token --------
+#
+# ADR-0003's WhatsApp rail signals a ban by RAISING `RailUnavailable` (a ban must
+# be loud and must stop the rail). JMP signals the same thing by returning
+# `detail="rail_unavailable:<reason>"`. If the wrapper only understood the second
+# shape, wrapping the WhatsApp rail would turn every ban into a raw exception.
+
+class _RaisingPrimary:
+    name = "whatsapp"
+
+    def __init__(self, exc=None):
+        self.exc = exc
+        self.calls = 0
+
+    @property
+    def capabilities(self):
+        from app.transports.base import Capabilities
+        return Capabilities(available=True, best_effort=True,
+                            delivery_receipts=False, countries=["*"])
+
+    def send(self, dest, body, **kw):
+        self.calls += 1
+        if self.exc is not None:
+            raise self.exc
+        return SendResult(accepted=True, rail=self.name, best_effort=True,
+                          receipt=None, status="sent")
+
+
+def test_a_raising_terminal_primary_degrades_instead_of_exploding():
+    smtp = RecordingSMTP()
+    stack = FailoverTransport(
+        _RaisingPrimary(RailUnavailable("terminated", "the account is banned")),
+        _email(smtp), overrides={"carrier": "tmobile"})
+
+    res = stack.send(US, "hello")
+
+    assert res.accepted is True
+    assert res.rail == "email_gateway"          # the send went out on the fallback
+    assert stack.degraded_count == 1
+    assert smtp.sent
+
+
+def test_a_raising_transient_primary_does_not_divert_paid_traffic():
+    smtp = RecordingSMTP()
+    stack = FailoverTransport(
+        _RaisingPrimary(RailUnavailable("not_connected", "reconnecting")),
+        _email(smtp), overrides={"carrier": "tmobile"})
+
+    res = stack.send(US, "hello")
+
+    assert smtp.sent == []
+    assert stack.degraded_count == 0
+    assert res.accepted is False
+    assert res.refundable is True
+    assert res.detail == "primary_transient:rail_unavailable:not_connected"
+
+
+def test_the_real_whatsapp_rail_composes_with_the_degrade_path():
+    """ADR-0003 §4: the WhatsApp rail behind the same wrapper `jmp_cheogram` uses."""
+    from app.transports.whatsapp import (DriverResult, WhatsAppConfig,
+                                         WhatsAppTransport)
+
+    class BannedDriver:
+        def __init__(self):
+            self.sent = []
+
+        def device_online(self):
+            return True
+
+        def send(self, dest, body):
+            self.sent.append((dest, body))
+            return DriverResult(ui_state="banned", detail="banned screen")
+
+    driver = BannedDriver()
+    wa = WhatsAppTransport(driver, config=WhatsAppConfig(serial="emulator-5554"))
+    smtp = RecordingSMTP()
+    stack = FailoverTransport(wa, _email(smtp), overrides={"carrier": "tmobile"})
+
+    first = stack.send(US, "hello")
+    assert first.accepted is True and first.rail == "email_gateway"
+    assert wa.down_reason == "terminated"       # the ban latched the rail
+    assert stack.degraded_count == 1
+
+    second = stack.send(US, "again")
+    assert second.rail == "email_gateway"
+    assert len(driver.sent) == 1                # the device is never touched again
+
+
 def _stack(link=None, smtp=None, **kw):
     jmp = JmpCheogramTransport(link or FakeLink(), **kw)
     return FailoverTransport(jmp, _email(smtp or RecordingSMTP()),

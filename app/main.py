@@ -15,6 +15,7 @@ it — and the money path is only as real as the objects handed in.
 from __future__ import annotations
 
 import json
+import os
 import secrets
 
 from fastapi import Depends, FastAPI, Request
@@ -33,6 +34,8 @@ from .quota import QuotaError, QuotaStore
 from .refunds import refund_all
 from .transports import (EmailGatewayTransport, FakeTransport, TelnyxTransport,
                          WhatsAppTransport, maybe_await)
+from .transports.errors import RailPaced, RailUnavailable
+from .transports.whatsapp import DEFAULT_HALT_STATE as WHATSAPP_HALT_STATE
 
 
 def build_transport(cfg: Config):
@@ -49,8 +52,12 @@ def build_transport(cfg: Config):
         return EmailGatewayTransport()
     if name in ("whatsapp", "wa"):
         # ADR-0003: the official Android client over adb. Built from Config so the
-        # NOSMS_WHATSAPP_* values have exactly one reader.
-        return WhatsAppTransport.from_service_config(cfg)
+        # NOSMS_WHATSAPP_* values have exactly one reader. The persisted
+        # kill-switch path is resolved from the environment here, so a restart
+        # after a detected ban does not re-touch the device.
+        return WhatsAppTransport.from_service_config(
+            cfg, halt_path=os.environ.get("NOSMS_WHATSAPP_HALT_STATE",
+                                          WHATSAPP_HALT_STATE))
     return FakeTransport()
 
 
@@ -251,6 +258,35 @@ def create_app(config: Config | dict | None = None, transport=None, mint=None) -
         # 8. hand it to the rail
         try:
             result = await maybe_await(rail.send(dest, text))
+        except RailPaced as exc:
+            # The rail declined to attempt the send (personal-line pacing): the
+            # message never left, so the postage goes straight back and the caller
+            # is told *when* to come back instead of being charged for a failure.
+            escrow.update_status(message_id, status="failed",
+                                 provider_status=f"rail_paced:{exc.reason}")
+            refund_all(escrow, rail, message_id, "rail_paced")
+            return error_response(
+                429, "rail_paced",
+                f"The rail is pacing this personal line ({exc.reason}); the "
+                f"message was not attempted. Retry after {exc.retry_after} s — "
+                f"your postage was refunded.",
+                retry_after=exc.retry_after,
+                extra={"message_id": message_id, "pacing_reason": exc.reason,
+                       "retry_after_seconds": exc.retry_after,
+                       "refunded": True, "refund_sats": record.held})
+        except RailUnavailable as exc:
+            # The rail stopped itself (banned line, terminated account): fail
+            # loudly and machine-branchably. A retry loop is the operator's
+            # problem to fix, never this endpoint's to hide.
+            escrow.update_status(message_id, status="failed",
+                                 provider_status=f"rail_unavailable:{exc.reason}")
+            refund_all(escrow, rail, message_id, "rail_unavailable")
+            return error_response(
+                503, "rail_unavailable",
+                f"The rail is down ({exc.reason}); the message was not sent and "
+                f"your postage was refunded.",
+                extra={"message_id": message_id, "rail_reason": exc.reason,
+                       "refunded": True, "refund_sats": record.held})
         except Exception as exc:                             # noqa: BLE001
             escrow.update_status(message_id, status="failed",
                                  provider_status=f"transport_exception:{type(exc).__name__}")

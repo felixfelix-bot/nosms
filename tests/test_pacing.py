@@ -18,6 +18,7 @@ from app.transports.pacing import (
     PacingDecision,
     PacingPolicy,
     load_pacing_policy,
+    load_whatsapp_pacing_policy,
 )
 
 
@@ -76,6 +77,30 @@ def test_policy_loads_from_env():
                             "NOSMS_JMP_MIN_GAP_SECONDS": "90",
                             "NOSMS_JMP_MAX_GAP_SECONDS": "120"})
     assert (p.daily_cap, p.min_gap_seconds, p.max_gap_seconds) == (7, 90.0, 120.0)
+
+
+def test_the_whatsapp_rail_has_its_own_policy_not_the_jmp_policy():
+    """Two personal lines, two counters: one policy shared would meter the wrong line.
+
+    ADR-0003: on WhatsApp the operator's own account is what a burst costs, so the
+    defaults are intentionally tighter than the JMP rail's.
+    """
+    wa = load_whatsapp_pacing_policy({})
+    jmp = load_pacing_policy({})
+    assert (wa.daily_cap, wa.min_gap_seconds, wa.max_gap_seconds) == (10, 120.0, 600.0)
+    assert wa != jmp
+    assert wa.daily_cap < jmp.daily_cap
+    assert wa.min_gap_seconds > jmp.min_gap_seconds
+
+
+def test_whatsapp_policy_loads_from_its_own_knobs():
+    p = load_whatsapp_pacing_policy({"NOSMS_WHATSAPP_DAILY_CAP": "3",
+                                     "NOSMS_WHATSAPP_MIN_GAP_SECONDS": "5",
+                                     "NOSMS_WHATSAPP_MAX_GAP_SECONDS": "9"})
+    assert (p.daily_cap, p.min_gap_seconds, p.max_gap_seconds) == (3, 5.0, 9.0)
+    # the JMP knobs must not leak into the WhatsApp rail
+    assert load_whatsapp_pacing_policy(
+        {"NOSMS_JMP_DAILY_CAP": "99"}).daily_cap == 10
 
 
 # --- the daily cap -----------------------------------------------------------

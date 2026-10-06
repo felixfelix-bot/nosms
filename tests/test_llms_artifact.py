@@ -27,6 +27,12 @@ REQUIRED = [
     "insufficient_funds",
     "destination_cooldown",
     "daily_cap_reached",
+    # T4: the rail is a second gate. A paced call defers with Retry-After; a rail
+    # that stopped reports rail_unavailable. Both are refund events, and both are
+    # emitted by app/main.py, so both must be advertised here.
+    "rail_paced",
+    "rail_unavailable",
+    "Retry-After",
     "escrowed",
     "input fee",
 ]

@@ -209,6 +209,78 @@ def test_a_hard_transport_failure_is_refunded_immediately(tmp_path):
     assert decode_token(recs[0].refund_token).amount == 4096
 
 
+# --- T4: a paced rail defers (429 + Retry-After); a stopped rail fails loudly --
+#
+# Both shapes take the postage first and hand it straight back: the message never
+# left, so charging for it would be wrong. The difference is what the caller is
+# told: a deferral to come back, or a rail that stopped and needs a human.
+
+class _RaisingRail:
+    """A rail double that raises the way the WhatsApp rail does (ADR-0003)."""
+
+    name = "whatsapp"
+
+    def __init__(self, exc):
+        self.exc = exc
+        self.calls = 0
+
+    @property
+    def capabilities(self):
+        from app.transports.base import Capabilities
+        return Capabilities(available=True, best_effort=True,
+                            delivery_receipts=False, countries=["*"])
+
+    def send(self, dest, body, **kw):
+        self.calls += 1
+        raise self.exc
+
+
+def test_a_paced_rail_answers_429_with_retry_after_and_refunds(tmp_path):
+    from app.transports.errors import RailPaced
+
+    mint = StubMint(fee_ppk=0)
+    rail = _RaisingRail(RailPaced("min_gap", 42.0, detail="personal-line pacing"))
+    app = make_app(tmp_path, transport=rail, mint=mint)
+    client = TestClient(app)
+
+    r = send(client, token=make_token([4096]))
+
+    assert r.status_code == 429
+    assert r.headers["x-reason"] == "rail_paced"
+    assert r.headers["retry-after"] == "42"          # the deferral is machine-readable
+    assert r.json()["pacing_reason"] == "min_gap"
+    assert r.json()["retry_after_seconds"] == 42
+    assert rail.calls == 1
+    recs = app.state.escrow.list_all()
+    assert len(recs) == 1
+    assert recs[0].status == "failed"
+    assert recs[0].provider_status == "rail_paced:min_gap"
+    assert recs[0].refunded_at is not None
+    assert recs[0].refund_amount == 4096             # nothing was attempted
+    assert decode_token(recs[0].refund_token).amount == 4096
+
+
+def test_a_stopped_rail_answers_503_rail_unavailable_and_refunds(tmp_path):
+    from app.transports.errors import RailUnavailable
+
+    mint = StubMint(fee_ppk=0)
+    rail = _RaisingRail(RailUnavailable("terminated", "the account is banned"))
+    app = make_app(tmp_path, transport=rail, mint=mint)
+    client = TestClient(app)
+
+    r = send(client, token=make_token([4096]))
+
+    assert r.status_code == 503
+    assert r.headers["x-reason"] == "rail_unavailable"
+    assert r.json()["rail_reason"] == "terminated"
+    assert "retry-after" not in r.headers          # a stop is not a "come back soon"
+    recs = app.state.escrow.list_all()
+    assert len(recs) == 1
+    assert recs[0].provider_status == "rail_unavailable:terminated"
+    assert recs[0].refunded_at is not None
+    assert recs[0].refund_amount == 4096
+
+
 # --- quotas -----------------------------------------------------------------
 
 def test_second_send_to_the_same_destination_hits_the_cooldown(tmp_path):
