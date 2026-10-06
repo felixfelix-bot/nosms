@@ -11,6 +11,20 @@ import subprocess
 from dataclasses import dataclass, replace
 
 
+def _float_env(raw, default: float) -> float:
+    """Parse a numeric env var, tolerating garbage.
+
+    A malformed value must not take the service down, and must not silently
+    shorten a timeout (the unsafe direction for a send). Garbage -> the default.
+    """
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
+
+
 def _git_sha() -> str | None:
     """Best-effort short commit sha of the deployed checkout. Never raises."""
     for var in ("NOSMS_COMMIT", "NOSMS_BUILD_SHA", "GIT_COMMIT"):
@@ -60,6 +74,19 @@ class Config:
     #: where the CVM contract is served, advertised in the CEP-6 catalog.
     cvm_contract_url: str = "https://nosms.orangesync.tech/cvm/llms.txt"
 
+    # --- WhatsApp rail (ADR-0003) ----------------------------------------
+    #: adb device serial of the emulator running the official WhatsApp client,
+    #: e.g. ``emulator-5554``. Empty means *no device*: the rail then reports
+    #: itself unavailable and refuses to send rather than failing late.
+    whatsapp_serial: str = ""
+    #: the adb binary (name or path) used to address that device.
+    whatsapp_adb: str = "adb"
+    #: the AVD the lifecycle harness owns (``tools/emulator/emulator-harness.sh``).
+    whatsapp_avd: str = "wa-dev"
+    #: how long one send on the device may take, and how long one UI read may take.
+    whatsapp_send_timeout_seconds: float = 90.0
+    whatsapp_ui_timeout_seconds: float = 30.0
+
     @classmethod
     def from_env(cls, env: dict | None = None, **overrides) -> "Config":
         e = os.environ if env is None else env
@@ -81,6 +108,13 @@ class Config:
             price_sats=int(e.get("NOSMS_PRICE_SATS", "2900")),
             cvm_contract_url=e.get("NOSMS_CVM_CONTRACT_URL",
                                    "https://nosms.orangesync.tech/cvm/llms.txt"),
+            whatsapp_serial=(e.get("NOSMS_WHATSAPP_SERIAL") or "").strip(),
+            whatsapp_adb=e.get("NOSMS_WHATSAPP_ADB") or "adb",
+            whatsapp_avd=e.get("NOSMS_WHATSAPP_AVD") or "wa-dev",
+            whatsapp_send_timeout_seconds=_float_env(
+                e.get("NOSMS_WHATSAPP_SEND_TIMEOUT_SECONDS"), 90.0),
+            whatsapp_ui_timeout_seconds=_float_env(
+                e.get("NOSMS_WHATSAPP_UI_TIMEOUT_SECONDS"), 30.0),
         )
         if overrides:
             cfg = replace(cfg, **{k: v for k, v in overrides.items()

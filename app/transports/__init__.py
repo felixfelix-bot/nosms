@@ -6,6 +6,8 @@ Rails
 * :class:`EmailGatewayTransport` — carrier email-to-SMS (rail #3)
 * :class:`TelnyxTransport` — the Telnyx SMS gateway (M1b); pollable
 * :class:`JmpCheogramTransport` — the operator's JMP/Cheogram line (ADR-0002)
+* :class:`WhatsAppTransport` — the official Android client driven over adb
+  (ADR-0003); no delivery receipts, ever
 
 Composition
 -----------
@@ -32,6 +34,7 @@ from .fake import FakeTransport
 from .jmp_cheogram import JmpCheogramTransport, JmpLink, is_rail_down
 from .pacing import Pacer, PacingDecision, PacingPolicy, load_pacing_policy
 from .telnyx import SmsGatewayNotFound, TelnyxTransport, load_sms_gateway
+from .whatsapp import AdbWhatsAppDriver, WhatsAppConfig, WhatsAppTransport
 
 __all__ = [
     "Capabilities", "SendResult", "Transport", "Pollable", "TransportStatus",
@@ -41,6 +44,7 @@ __all__ = [
     "FakeTransport",
     "TelnyxTransport", "SmsGatewayNotFound", "load_sms_gateway",
     "JmpCheogramTransport", "JmpLink", "is_rail_down",
+    "WhatsAppTransport", "WhatsAppConfig", "AdbWhatsAppDriver",
     "FailoverTransport",
     "Pacer", "PacingPolicy", "PacingDecision", "load_pacing_policy",
     "build_transport",
@@ -55,7 +59,8 @@ def build_transport(name: str | None = None, *, env: dict | None = None,
     """Build the configured rail. The only factory the app should call.
 
     Names: ``fake`` (default), ``email_gateway``, ``jmp_cheogram`` (JMP with the
-    email degrade path behind it), ``jmp_only`` (JMP alone, no degrade).
+    email degrade path behind it), ``jmp_only`` (JMP alone, no degrade),
+    ``whatsapp`` (the official Android client over adb, ADR-0003).
     """
     e = os.environ if env is None else env
     name = (name or e.get("NOSMS_TRANSPORT") or "fake").strip().lower()
@@ -80,4 +85,8 @@ def build_transport(name: str | None = None, *, env: dict | None = None,
             smtp_host=e.get("NOSMS_SMTP_HOST", "localhost"),
             smtp_port=int(e.get("NOSMS_SMTP_PORT", "25")),
             sender=e.get("NOSMS_SMTP_SENDER", "sms@orangesync.tech")))
+    if name in ("whatsapp", "wa"):
+        # Building the rail touches no device and no network: the driver only
+        # records its config, and `capabilities` never probes (see the module).
+        return WhatsAppTransport.from_env(e)
     raise ValueError(f"unknown transport {name!r}")
