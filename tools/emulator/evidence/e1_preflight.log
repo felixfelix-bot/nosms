@@ -1,0 +1,61 @@
+########## E1 PREFLIGHT 2026-10-06T07:25:10Z ##########
+--- hostname / kernel ---
+c03rad0r-DQ05proplus
+6.17.0-41-generic
+4
+--- gate 1: /dev/kvm exists (char device) ---
+PASS: /dev/kvm is a char device
+--- gate 1b: /dev/kvm openable O_RDWR ---
+PASS: KVM openable: True
+--- gate 2: disk avail on / >= 15 GB ---
+/dev/sda2           468G  369G       75G  84% /
+avail_GB=75
+PASS: DISK_OK
+--- gate 3: RAM available >= 4 GB ---
+               total        used        free      shared  buff/cache   available
+Mem:              10           3           0           0           6           7
+Swap:             37           1          35
+available_GB=7
+PASS: RAM_OK
+--- gate 4: dl.google.com reachable (200) ---
+commandlinetools_latest_http=200
+dl.google.com_root_http=302
+--- SDK recon ---
+ANDROID_HOME=unset ANDROID_SDK_ROOT=unset
+/home/c03rad0r/Android/Sdk
+build-tools
+cmdline-tools
+licenses
+ndk
+platform-tools
+platforms
+--- cmdline-tools ---
+latest
+--- sdkmanager version ---
+Warning: This version only understands SDK XML versions up to 3 but an SDK XML file of version 4 was encountered. This can happen if you use versions of Android Studio and the command-line tools that were released at different times.
+12.0
+
+--- platforms / build-tools / licenses ---
+android-34
+android-35
+34.0.0
+android-googletv-license
+android-googlexr-license
+android-sdk-arm-dbt-license
+android-sdk-license
+android-sdk-preview-license
+google-gdk-license
+mips-android-sysimage-license
+--- emulator / platform-tools / system-images present? ---
+ls: cannot access '/home/c03rad0r/Android/Sdk/emulator': No such file or directory
+/home/c03rad0r/Android/Sdk/platform-tools
+ls: cannot access '/home/c03rad0r/Android/Sdk/system-images': No such file or directory
+--- which adb / emulator ---
+--- existing AVDs ---
+ls: cannot access '/home/c03rad0r/.android/avd': No such file or directory
+--- load / pressure ---
+7.06 5.79 4.73 1/981 3837016
+some avg10=64.28 avg60=62.84 avg300=58.31 total=23290613712
+full avg10=40.87 avg60=47.14 avg300=46.53 total=19129699036
+--- groups ---
+c03rad0r adm dialout cdrom sudo audio dip plugdev users lpadmin docker libvirt ollama kvm
