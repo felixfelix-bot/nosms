@@ -176,30 +176,59 @@ def cmd_register(args) -> int:
         wa_ui.print_nodes(xml)
         fail_loud("phone-entry field not on screen — registration state unexpected", args.out)
     log("tapping phone field and typing number")
-    wa_ui.tap(*wa_ui.center(phone_node["bounds"]))
-    time.sleep(1.5)
+    # Prior-run lesson (05*.xml): tap+type silently failed to focus/land when the
+    # box was laggy — all 4 attempts show focused=false, text=hint. Verify focus
+    # BEFORE typing and digits BEFORE NEXT. Re-tapping the empty field is
+    # ban-safe; only NEXT triggers the OTP send.
+    for attempt in (1, 2):
+        wa_ui.tap(*wa_ui.center(phone_node["bounds"]))
+        time.sleep(2.5 if attempt == 1 else 5.0)
+        xml = dump_ui(os.path.join(args.out, f"10{attempt}_focus_probe.xml"))
+        node = wa_ui.find(xml, rid="com.whatsapp:id/registration_phone")
+        if node is not None and node["focused"] == "true":
+            log(f"field focused on attempt {attempt}")
+            break
+        log(f"field not focused after attempt {attempt} (focused={node['focused'] if node else 'gone'})")
+    else:
+        wa_ui.print_nodes(xml)
+        fail_loud("phone field would not take focus — abort before any OTP request", args.out)
     wa_ui.adb("shell", "input keyevent KEYCODE_MOVE_END")
     for _ in range(12):
         wa_ui.adb("shell", "input keyevent 67")  # DEL any stray digits
     wa_ui.adb("shell", f"input text {JMP_NUMBER}")
-    time.sleep(1.0)
+    time.sleep(2.0)
     xml = dump_ui(os.path.join(args.out, "11_number_typed.xml"))
     check_refusals(xml, args.out)
     # verify the digits landed before touching NEXT
     typed = wa_ui.find(xml, rid="com.whatsapp:id/registration_phone")
     shown = "".join(re.findall(r"\d", typed["text"])) if typed else ""
     if JMP_NUMBER not in shown:
-        wa_ui.print_nodes(xml)
-        fail_loud(f"phone field shows {shown!r}, expected {JMP_NUMBER} — abort before NEXT", args.out)
+        # one ban-safe re-focus + re-type (field edits never send an OTP)
+        log(f"field shows {shown!r} after typing; one re-focus attempt")
+        if typed:
+            wa_ui.tap(*wa_ui.center(typed["bounds"]))
+            time.sleep(2.5)
+            wa_ui.adb("shell", "input keyevent KEYCODE_MOVE_END")
+            for _ in range(12):
+                wa_ui.adb("shell", "input keyevent 67")
+        else:
+            wa_ui.tap(*wa_ui.center(phone_node["bounds"]))
+            time.sleep(2.5)
+        wa_ui.adb("shell", f"input text {JMP_NUMBER}")
+        time.sleep(2.0)
+        xml = dump_ui(os.path.join(args.out, "11b_number_typed.xml"))
+        check_refusals(xml, args.out)
+        typed = wa_ui.find(xml, rid="com.whatsapp:id/registration_phone")
+        shown = "".join(re.findall(r"\d", typed["text"])) if typed else ""
+        if JMP_NUMBER not in shown:
+            wa_ui.print_nodes(xml)
+            fail_loud(f"phone field shows {shown!r}, expected {JMP_NUMBER} — abort before NEXT", args.out)
     log(f"field verified: {shown!r}; tapping NEXT")
-    nxt = wa_ui.find(xml, text="NEXT") or wa_ui.find(xml, rid="com.whatsapp:id/registration_phone")
-    if nxt is None or not nxt.get("clickable"):
-        pass  # tap-text fallback below
-    nxt2 = wa_ui.find(xml, text="NEXT", exact=True) or wa_ui.find(xml, text="next", exact=False)
-    if nxt2 is None:
+    nxt = wa_ui.find(xml, text="NEXT", exact=True) or wa_ui.find(xml, text="next")
+    if nxt is None:
         wa_ui.print_nodes(xml)
         fail_loud("NEXT button not found after typing number", args.out)
-    wa_ui.tap(*wa_ui.center(nxt2["bounds"]))
+    wa_ui.tap(*wa_ui.center(nxt["bounds"]))
     time.sleep(4)
     xml = dump_ui(os.path.join(args.out, "12_after_next.xml"))
     check_refusals(xml, args.out)
