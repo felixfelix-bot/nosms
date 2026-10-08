@@ -212,14 +212,16 @@ def cmd_register(args) -> int:
     # Field edits NEVER trigger an OTP — only NEXT/OK does — so one bounded
     # re-entry attempt stays ban-safe.
     res = u2("set-text", "com.whatsapp:id/registration_phone", JMP_NUMBER)
-    log(f"set-text result: text={res.get('text')!r}")
-    info = u2("info", "com.whatsapp:id/registration_phone")
-    shown = "".join(re.findall(r"\d", info.get("text") or ""))
+    shown = "".join(re.findall(r"\d", res.get("text") or ""))
+    log(f"set-text result: text={res.get('text')!r} digits={shown!r}")
+    # uiautomator2's immediate get_text() is the authoritative result of
+    # ACTION_SET_TEXT. A follow-up .info RPC is deliberately avoided: on the
+    # remote atx-agent it can disconnect transiently after clear/set_text,
+    # while the returned text is already the same accessibility value.
     if JMP_NUMBER not in shown:
         log(f"field shows {shown!r}; one ban-safe re-entry attempt")
         res = u2("set-text", "com.whatsapp:id/registration_phone", JMP_NUMBER)
-        info = u2("info", "com.whatsapp:id/registration_phone")
-        shown = "".join(re.findall(r"\d", info.get("text") or ""))
+        shown = "".join(re.findall(r"\d", res.get("text") or ""))
         if JMP_NUMBER not in shown:
             xml = dump_ui(os.path.join(args.out, "11_number_failed.xml"))
             wa_ui.print_nodes(xml)

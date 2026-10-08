@@ -22,6 +22,8 @@ Branch: wt/t_c930a683 (pushed to origin). Worktree: ~/repos/nosms/.worktrees/t_c
 8. `bash tools/whatsapp/e2_bringup.sh teardown` — never leave the 3.3G guest on the 4-core box
 9. commit evidence/ + push; kanban_complete (child E3 t_9f3b1c8a released by completion)
 
+- Run 173: uiautomator2 set-text returned and verified live number; follow-up info RPC disconnected, so validation now uses set-text response; NEXT accessibility click returned success but screen stayed on phone-entry and inbox max id remained 4; stopped with zero OTP/ban risk → tools/whatsapp/wa_register.py, tools/whatsapp/evidence/e2/
+
 ## STOP conditions (fail-loud, exit 42, never retry)
 - voice call demanded / VoIP number refused / "we're unable" / "invalid number" / retry-nudges
 - OTP not in inbox within 420s
