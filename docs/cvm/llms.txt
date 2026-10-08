@@ -1,0 +1,156 @@
+# nosms — SMS for agents (ContextVM)
+
+> Send SMS on behalf of others over ContextVM (MCP over Nostr). Agent-first:
+> pay per send in Cashu. No account, no API key, no signup.
+
+## How to reach it
+
+- Transport: ContextVM — MCP JSON-RPC over Nostr, kind `25910`, addressed by npub.
+- Discover with `cvmi discover` (CEP-6 announcements, kinds `11316`–`11320`).
+- Server npub: `<set at publish>`
+- Relay(s): `wss://relay.contextvm.org`, `wss://relay2.contextvm.org`,
+  `wss://relay.primal.net`
+
+## Get this contract at runtime (no out-of-band fetch)
+
+Call the `docs` tool (alias: `llms`) — it returns **this document verbatim**.
+`sms.capabilities` returns the live capability flags and `sms.pricing` the live
+price — **always read those two before sending; never hardcode what is below.**
+The same two documents are exposed as MCP resources
+`nosms://llms.txt` and `nosms://llms-full.txt`.
+
+## Tools
+
+- `sms.send(to, body)` — **PAID**. `to` is E.164 (`+14155550100`).
+- `sms.status(id)` — free. Returns the send record.
+- `sms.pricing` — free. Live price in sats.
+- `sms.capabilities` — free. Rail name + capability flags.
+- `docs` (alias `llms`) — free. This contract.
+- `llms-full` — free. The full manual.
+
+### JMP account tools (the operator's own line)
+
+- `jmp.status` — free, read-only. The funding facts: the reserved number, the
+  BTC deposit address, the minimum amount, with `source` honestly `cached` or
+  `live-flow`. Never spends.
+- `jmp.funding` — free. Drives the JMP/Cheogram ad-hoc flow to the funding step
+  and returns the same payload with `source: live-flow`. It **cannot pay**: no
+  card path, no payment form is submitted — a human sends the BTC. Fails with
+  `rail_unavailable` rather than answering from cache.
+- `jmp.credentials` — **PAID** (tier: financial) and allow-listed. Returns the
+  account's access material as a NIP-44 v2 payload addressed to the caller's
+  npub — never the plaintext. The caller's pubkey must be on the server's
+  operator allow-list, and that check happens **before** payment.
+
+The number is a **session-scoped reservation**, not ownership: JMP holds the
+number for the session that selected it and the offer has changed between runs.
+Re-drive `jmp.funding` to confirm it. ToS: JMP restricts automated use of its
+personal rail; the operator accepted that risk for this one line — these tools
+are not a licence for bulk use.
+
+## Pricing (sats)
+
+**Flat: 2900 sats per message, for every destination** — domestic and
+international alike (ADR-0002). The v1 rail's plan is unlimited *including*
+international, so the destination does not change the cost; the old
+domestic/international split is superseded.
+
+The price is a rugpull-risk premium, not a cost pass-through:
+
+```
+price_sats = ceil(MULT * rail_replacement_usd * (1e8 / btc_usd))
+```
+
+with `MULT = 0.5`, `rail_replacement_usd = 4.99`, and `btc_usd` live from
+Binance `BTCUSDT`. The published figure (2900) is the rounded default; the raw
+formula value today is 2886. There is a hard floor of 1000 sats.
+
+Authoritative values come from `sms.pricing`; the numbers above are defaults.
+
+## Capabilities — read these, do not assume
+
+v1 rail is a single personal JMP/Cheogram line. It reports honestly:
+
+```
+best_effort:        true      # no retry guarantee
+delivery_receipts:  false     # NO delivery confirmation is possible
+countries:          [US, CA]
+```
+
+**A successful `sms.send` means "accepted by the rail", NOT "delivered".**
+Do not build delivery-dependent logic (OTP confirmation, escrow release on
+delivery) on this rail.
+
+### Rails, and what each one may claim
+
+The service ships one rail per deployment; the contract always describes the
+rail that is actually serving, and `sms.capabilities` is the live answer.
+
+- **JMP/Cheogram** — the v1 default (ADR-0002): one personal line, `[US, CA]`.
+- **WhatsApp** (`NOSMS_TRANSPORT=whatsapp`, ADR-0003) — the official Android
+  client driven over `adb` on the operator's own number. `delivery_receipts` is
+  `false` there **permanently** and no `receipt` is ever returned: a scraped
+  "delivered" tick is downgraded to `sent`, because pixels on a guest we control
+  are not a delivery proof. `countries` is `["*"]` (WhatsApp is global). The ToS
+  collision and the operator's accepted ban risk are recorded in
+  `docs/adr/0003-whatsapp-rail.md`; `NOSMS_TRANSPORT=whatsapp_email` adds the
+  ADR-0002 email degrade path behind the same rail.
+
+### Volume is the abuse surface (both rails)
+
+Every rail rides a personal line, so each one is paced by its **own** persisted
+counter — a hard daily cap plus a re-jittered minimum gap —
+
+- a paced call is `rail_paced`: the message was never attempted, so nothing is
+  charged; wait and retry (the HTTP surface answers `429` + `Retry-After`).
+- a rail that has **stopped** (a detected ban, or an unregistered client on the
+  WhatsApp rail) reports `rail_unavailable` with a terminal reason
+  (`terminated` / `auth_failed`) and is **never retried**. The rail latches
+  itself off — persisted, so a restart is not a retry — and shouts in the logs.
+  An operator clears it; a caller should refund and branch on the reason.
+
+Nothing is ever silently retried, and neither shape is billed: a message that was
+not attempted may not be charged for.
+
+## Payment (CEP-8)
+
+- Gating: `explicit_gating` — nothing is sent before payment lands. An unpaid
+  call is answered with a *visible* tool error (`payment_required`); it is never
+  silently dropped.
+- `cap:tool:sms.send:2900:sats` (advertised in the CEP-6 catalog as a `cap` tag).
+- PMI: `bitcoin-cashu` (primary). The `sms.send` call carries either
+  `cashu_token` (the ecash) or `settlement_receipt` (the shell's settlement).
+- A Cashu token is **swapped at the mint** on receipt (NUT-03): holding an
+  unswapped token is not escrow, because the sender still owns the secrets.
+- Hard failures the rail can detect are auto-refunded; a `best_effort` miss is
+  not, because the rail cannot observe it.
+- Owner allowlist: the operator's own npub sends free — paying yourself is
+  pointless. `sms.status`, `sms.pricing`, `sms.capabilities` and `docs` are
+  always free for everyone.
+
+## Errors
+
+Every refusal is a JSON-RPC `result` carrying `isError: true` and a body with:
+
+- `reason`: machine token — `payment_required`, `insufficient_funds`,
+  `bad_destination`, `destination_unsupported`, `rail_not_configured`,
+  `jmp_not_configured`, `transport_error`, `rail_unavailable`, `rail_paced`,
+  `rate_limited`, `owner_only`, `credential_unavailable`,
+  `credentials_encryption_unconfigured`, `token_invalid`,
+  `token_unsupported`, `token_empty`, `token_wrong_mint`,
+  `token_already_spent`, `token_state_unknown`, `mint_error`,
+  `mint_unreachable`, `not_found`, `unsupported method`.
+- `hint`: one human-readable sentence.
+
+Unknown methods answer with `unsupported method`. A refusal is *always*
+returned; there is no code path that answers a call with nothing.
+
+## Data handling
+
+Destination numbers and message bodies are retained only for status lookups and
+refunds. No marketing use, no third-party sharing, no analytics.
+
+---
+*Contract version: v3 (2026-10-06). Owned by the operator; the v1 rail is the
+operator's own personal line, sold as a risk-priced service — treat volume limits
+as real. v3 adds the rails' pacing gate and the loud stop (T4 of ADR-0003).*

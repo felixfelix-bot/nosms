@@ -1,6 +1,7 @@
-# gitleaks configuration for nosms — exactly one exception, and here is why.
+# gitleaks configuration for nosms — one allowlist, three public-data literals,
+# each with its why.
 #
-# WHY THIS FILE EXISTS
+# ── Exception 1: Machankura's PUBLIC LNURL-pay nostrPubkey ──────────────────
 #   Machankura (8333.mobi) publishes a `nostrPubkey` in the LNURL-pay
 #   payRequest document that every payer receives:
 #
@@ -12,23 +13,26 @@
 #   funds on its own. gitleaks' `generic-api-key` rule fires on it only because
 #   it is 64 hex characters with high entropy.
 #
-# WHY THE LITERAL IS KEPT RATHER THAN SCRUBBED
+#   WHY THE LITERAL IS KEPT RATHER THAN SCRUBBED:
 #   tests/fixtures/lnurlp_sigidli_200.json is the live response stored
 #   byte-for-byte, and the suite pins it to the Content-Length the server
 #   actually sent (457). Redacting the pubkey would destroy the fixture's only
-#   value: proving that we parse what the service really answers, including
-#   `allowsNostr` / `nostrPubkey` handling.
+#   value: proving that we parse what the service really answers.
 #
-# SCOPE
-#   One literal, one context. `regexTarget = "line"` and the mandatory
-#   `nostr_?pub_?key` context mean the same 64 hex characters appearing
-#   anywhere else in this repo are still a finding. No path is exempted, no
-#   rule is disabled, and `useDefault = true` keeps the full default rule set.
+# ── Exceptions 2+3: NIP-98 spec example event (inherited from master) ───────
+#   app/llms.py quotes the NIP-98 specification's own example event verbatim so
+#   agents get a copy-pasteable header. Its `pubkey` and `sig` are PUBLIC data
+#   from the spec (https://github.com/nostr-protocol/nips/blob/master/98.md),
+#   not credentials.
 #
-# SCHEMA NOTE
-#   `[allowlist]` (singular). `[[allowlists]]` (plural) is silently ignored by
-#   gitleaks 8.21.x — verified here on 2026-09-27 and documented in
-#   hermes-kanban/.gitleaks.toml.
+# SCOPE: three literals, each scoped. No path is exempted, no rule is disabled,
+# and `useDefault = true` keeps the full default rule set. Note: exception 1's
+# entry keeps its `nostr_?pub_?key` context requirement via the inline regex,
+# so the same 64 hex characters appearing anywhere else are still a finding.
+#
+# SCHEMA NOTE: `[allowlist]` (singular). `[[allowlists]]` (plural) is silently
+# ignored by gitleaks 8.21.x — verified here on 2026-09-27 and documented in
+# hermes-kanban/.gitleaks.toml.
 
 title = "nosms"
 
@@ -36,6 +40,10 @@ title = "nosms"
 useDefault = true
 
 [allowlist]
-description = "Machankura's PUBLIC LNURL-pay nostrPubkey, published in every payRequest response (not a credential)"
+description = "Public-data literals: Machankura's published LNURL nostrPubkey + the NIP-98 spec example event (not credentials)"
 regexTarget = "line"
-regexes = ['''(?i)nostr[_-]?pub[_-]?key\D{0,20}9b2b23d5f8a7112903c4dc600b0a92c4317918fcfcfbd2bf55a758f1b9a4feca''']
+regexes = [
+  '''(?i)nostr[_-]?pub[_-]?key\D{0,20}9b2b23d5f8a7112903c4dc600b0a92c4317918fcfcfbd2bf55a758f1b9a4feca''',
+  '''63fe6318dc58583cfe16810f86dd09e18bfd76aabc24a0081ce2856f330504ed''',
+  '''5ed9d8ec958bc854f997bdc24ac337d005af372324747efe4a00e24f4c30437ff4dd8308684bed467d9d6be3e5a517bb43b1732cc7d33949a3aaf86705c22184''',
+]

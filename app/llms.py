@@ -1,8 +1,42 @@
-# nosms — SMS for nostr keys (cashu.email parity)
+"""Agent-facing documentation served at /llms.txt (cashu.email parity).
 
-Service: nosms
-Version: 0.1.0
-Transport: fake
+Rendered from the live Config so the advertised surface cannot drift from the
+running service. `llms-full.txt` is a deliberate 501 stub for M1a.
+"""
+from __future__ import annotations
+
+import base64
+import json
+
+#: A real, valid kind-27235 event (from the NIP-98 spec) used for the
+#: copy-pasteable example. `created_at` is from the spec; treat it as a sample.
+EXAMPLE_EVENT = {
+    "id": "fe964e758903360f28d8424d092da8494ed207cba823110be3a57dfe4b578734",
+    "pubkey": "63fe6318dc58583cfe16810f86dd09e18bfd76aabc24a0081ce2856f330504ed",
+    "content": "",
+    "kind": 27235,
+    "created_at": 1682327852,
+    "tags": [
+        ["u", "https://nosms.orangesync.tech/api/send"],
+        ["method", "POST"],
+    ],
+    "sig": ("5ed9d8ec958bc854f997bdc24ac337d005af372324747efe4a00e24f4c30437f"
+            "f4dd8308684bed467d9d6be3e5a517bb43b1732cc7d33949a3aaf86705c22184"),
+}
+
+
+def example_header() -> str:
+    raw = json.dumps(EXAMPLE_EVENT, separators=(",", ":")).encode("utf-8")
+    return "Nostr " + base64.b64encode(raw).decode("ascii")
+
+
+def llms_txt(cfg) -> str:
+    header = example_header()
+    return f"""# nosms — SMS for nostr keys (cashu.email parity)
+
+Service: {cfg.service}
+Version: {cfg.version}
+Transport: {cfg.transport}
 
 Send a text message to any phone number. Your nostr key is your identity; you
 pay sats per message, postage-style. No account, no API key, no KYC.
@@ -16,7 +50,7 @@ pay sats per message, postage-style. No account, no API key, no KYC.
 
 The CVM surface has its own machine contract, reachable from the server itself
 via its `docs` tool: `docs/cvm/llms.txt` in this repo, and
-`https://nosms.orangesync.tech/cvm/llms.txt`
+`{getattr(cfg, "cvm_contract_url", "https://nosms.orangesync.tech/cvm/llms.txt")}`
 at runtime. Both surfaces share one price table and one `Transport`, so the same
 numbers and the same capability flags apply to both.
 
@@ -56,7 +90,7 @@ nosms accepts a `8333.mobi` address in two places:
    Paying is done by the payer from their own handset (they receive a bolt11
    invoice or a lightning address through SMS/USSD reachable rails; they
    cannot open a URL, so never send them one).
-2. **As a refund destination.** On non-delivery (T+15 min) the escrow is
+2. **As a refund destination.** On non-delivery (T+{getattr(cfg, "refund_after_seconds", 900) // 60} min) the escrow is
    refunded to the payer's lightning address — Machankura included.
 
 `commentAllowed` on Machankura is `60`, so a payer can attach a short comment
@@ -73,8 +107,8 @@ failing a refund over a long sentence would strand the payer's sats.
   controls that SIM at that moment. There is no chargeback, no reversal, no
   support line that can pull sats back.
 - **The address is only valid while that user is on Machankura.** An address
-  that resolved yesterday can answer `404 {"status":"error","reason":"User
-  <x> doesn't use the Machankura service."}` today. nosms therefore resolves
+  that resolved yesterday can answer `404 {{"status":"error","reason":"User
+  <x> doesn't use the Machankura service."}}` today. nosms therefore resolves
   the address **immediately before paying** and never pays a cached invoice.
 - **Refunds are idempotent.** One refund key settles at most once: a re-run
   (retry, crash recovery, operator re-click) replays the recorded receipt and
@@ -86,8 +120,8 @@ failing a refund over a long sentence would strand the payer's sats.
 
 ## Endpoints
 
-- `GET  /api/health`   -> JSON {service, version, commit, transport, mint, ok}. Open, cheap, no outbound calls.
-- `POST /api/send`     -> send one SMS. Requires NIP-98 auth and a Cashu postage token. Body: {"to": "<E.164>", "text": "..."}.
+- `GET  /api/health`   -> JSON {{service, version, commit, transport, mint, ok}}. Open, cheap, no outbound calls.
+- `POST /api/send`     -> send one SMS. Requires NIP-98 auth and a Cashu postage token. Body: {{"to": "<E.164>", "text": "..."}}.
 - `GET  /api/message/<message_id>/status` -> queued / sent / delivered / failed, plus the rail's own raw status string. Requires NIP-98 auth as the paying key.
 - `GET  /api/refund/<message_id>`         -> the refund token for an undelivered message. Requires NIP-98 auth as the paying key.
 - `GET  /llms.txt`     -> this document.
@@ -109,23 +143,23 @@ MUST tags:
 - `["payload", "<sha256(body) hex>"]` — SHOULD be included for POST bodies.
 
 The server verifies the event id, the BIP-340 signature, `kind == 27235`, a
-freshness window of +/- 120 seconds on `created_at`, and
-rejects replayed event ids for 300 seconds.
+freshness window of +/- {cfg.freshness_seconds} seconds on `created_at`, and
+rejects replayed event ids for {cfg.replay_ttl_seconds} seconds.
 
 Copy-pasteable example header (sample event; re-sign with your own key and a
 current `created_at`):
 
-    Authorization: Nostr eyJpZCI6ImZlOTY0ZTc1ODkwMzM2MGYyOGQ4NDI0ZDA5MmRhODQ5NGVkMjA3Y2JhODIzMTEwYmUzYTU3ZGZlNGI1Nzg3MzQiLCJwdWJrZXkiOiI2M2ZlNjMxOGRjNTg1ODNjZmUxNjgxMGY4NmRkMDllMThiZmQ3NmFhYmMyNGEwMDgxY2UyODU2ZjMzMDUwNGVkIiwiY29udGVudCI6IiIsImtpbmQiOjI3MjM1LCJjcmVhdGVkX2F0IjoxNjgyMzI3ODUyLCJ0YWdzIjpbWyJ1IiwiaHR0cHM6Ly9ub3Ntcy5vcmFuZ2VzeW5jLnRlY2gvYXBpL3NlbmQiXSxbIm1ldGhvZCIsIlBPU1QiXV0sInNpZyI6IjVlZDlkOGVjOTU4YmM4NTRmOTk3YmRjMjRhYzMzN2QwMDVhZjM3MjMyNDc0N2VmZTRhMDBlMjRmNGMzMDQzN2ZmNGRkODMwODY4NGJlZDQ2N2Q5ZDZiZTNlNWE1MTdiYjQzYjE3MzJjYzdkMzM5NDlhM2FhZjg2NzA1YzIyMTg0In0=
+    Authorization: {header}
 
 The same event as JSON:
 
-    {"id":"fe964e758903360f28d8424d092da8494ed207cba823110be3a57dfe4b578734","pubkey":"63fe6318dc58583cfe16810f86dd09e18bfd76aabc24a0081ce2856f330504ed","content":"","kind":27235,"created_at":1682327852,"tags":[["u","https://nosms.orangesync.tech/api/send"],["method","POST"]],"sig":"5ed9d8ec958bc854f997bdc24ac337d005af372324747efe4a00e24f4c30437ff4dd8308684bed467d9d6be3e5a517bb43b1732cc7d33949a3aaf86705c22184"}
+    {json.dumps(EXAMPLE_EVENT, separators=(",", ":"))}
 
 ## Sending — `POST /api/send`
 
 Body (JSON):
 
-    {"to": "+4915112345678", "text": "hello"}
+    {{"to": "+4915112345678", "text": "hello"}}
 
 `to` MUST be an E.164 destination (`+` and digits). `text` is the message; the
 alias `body` is accepted for compatibility. The postage token travels in a
@@ -135,7 +169,7 @@ header, not in the body — it is never logged with the message:
     X-Cashu: cashuBo2F0gaJhaVghAYQjfmPONCPffb...   (v4, base64url CBOR)
 
 Both token encodings are accepted. The token's mint MUST be
-`https://testnut.cashu.space` — postage is escrowed there and nowhere else.
+`{getattr(cfg, "mint_url", "https://testnut.cashu.space")}` — postage is escrowed there and nowhere else.
 
 What happens, in order:
 
@@ -152,12 +186,12 @@ What happens, in order:
    only sense in which holding a token is escrow at all.
 5. The message goes to the rail. On success you get `200` with:
 
-       {"message_id": "m_…", "price_sats": 2900, "change_sats": 28,
+       {{"message_id": "m_…", "price_sats": {getattr(cfg, "price_sats", 2900)}, "change_sats": 28,
          "status": "queued", "status_url": "/api/message/m_…/status",
          "refund_url": "/api/refund/m_…",
-         "escrow": {"mint": "…", "amount_sats": 2900}}
+         "escrow": {{"mint": "…", "amount_sats": {getattr(cfg, "price_sats", 2900)}}}}}
 
-**`price_sats` is 2900 for every destination.**
+**`price_sats` is {getattr(cfg, "price_sats", 2900)} for every destination.**
 
 **`queued` is not `delivered`.** Poll `status_url`; the reply carries both the
 normalised `status` (queued / sent / delivered / failed) and `provider_status`,
@@ -167,7 +201,7 @@ did not report: if the rail has no delivery receipts, the status never says
 
 ### Refunds
 
-If a message is still not delivered at T+15 minutes, the postage *and* the
+If a message is still not delivered at T+{getattr(cfg, "refund_after_seconds", 900) // 60} minutes, the postage *and* the
 unspent change go back to the paying key: `GET status_url` then shows
 `"refunded": true` with a `refund` block, and `GET /api/refund/<message_id>`
 returns the bearer token for that amount. Refunds are claimed atomically, so a
@@ -178,8 +212,8 @@ is never auto-refunded — silence is not proof of non-delivery.
 
 Config-driven, per key:
 
-- per-destination cooldown: 60 s → `429 destination_cooldown`
-- daily cap: 100 messages / rolling 24 h → `429 daily_cap_reached`
+- per-destination cooldown: {getattr(cfg, "destination_cooldown_seconds", 60)} s → `429 destination_cooldown`
+- daily cap: {getattr(cfg, "daily_cap", 100)} messages / rolling 24 h → `429 daily_cap_reached`
 
 **The rail is a second, independent gate.** Every rail rides a *personal* line,
 so volume is the abuse surface: a persisted daily cap plus a jittered minimum
@@ -198,7 +232,7 @@ Both are refund events — nothing was sent — and neither is ever charged for.
 
 Prices are charged in satoshis. The unit is sats — there is no fiat billing.
 
-**Flat: 2900 sats per message, for every destination** — domestic
+**Flat: {getattr(cfg, "price_sats", 2900)} sats per message, for every destination** — domestic
 and international alike. The v1 rail's plan is unlimited *including*
 international, so the destination does not change the cost; the old
 domestic/international split is superseded (ADR-0002).
@@ -210,7 +244,7 @@ price_sats = ceil(MULT * rail_replacement_usd * (1e8 / btc_usd))
 ```
 
 with `MULT = 0.5`, `rail_replacement_usd = 4.99`, and `btc_usd` live from Binance
-`BTCUSDT`. The published figure (2900) is the rounded default; the raw
+`BTCUSDT`. The published figure ({getattr(cfg, "price_sats", 2900)}) is the rounded default; the raw
 formula value is 2886. There is a hard floor of 1000 sats.
 
 An unknown prefix is never free — there is no code path that returns 0.
@@ -244,3 +278,9 @@ plaintext at the service. The destination number and the send outcome are kept
 only as long as needed to meter postage and settle refunds. The v1 rail has no
 delivery receipts: a send it accepts is reported as accepted, never as
 "delivered".
+"""
+
+
+def llms_full_txt() -> None:
+    """M1a ships only the stub; the full manual is a later milestone."""
+    return None

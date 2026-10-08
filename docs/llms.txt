@@ -1,0 +1,82 @@
+# nosms — SMS for agents (ContextVM)
+
+> Send SMS on behalf of others over ContextVM (MCP over Nostr). Agent-first:
+> pay per send in Cashu. No account, no API key, no signup.
+
+## How to reach it
+
+- Transport: ContextVM — MCP JSON-RPC over Nostr, kind `25910`, addressed by npub.
+- Discover with `cvmi discover` (CEP-6 announcements, kinds `11316`–`11320`).
+- Server npub: `<set at publish>`
+- Relay(s): `<set at publish>`
+
+## Get this contract at runtime (no out-of-band fetch)
+
+Call the `docs` tool (alias: `llms`). It returns this document verbatim.
+`sms.capabilities` returns the live capability flags, and `sms.pricing` the live
+prices — **always read those two before sending; never hardcode what is below.**
+
+## Tools
+
+- `sms.send(to, body)` — PAID. `to` is E.164 (`+18102944652`).
+- `sms.status(id)` — free. Returns the send record.
+- `sms.pricing` — free. Live per-destination price in sats.
+- `sms.capabilities` — free. Rail name + capability flags.
+- `docs` (alias `llms`) — free. This contract.
+
+## Pricing (sats)
+
+Risk-premium pricing (ADR-0002): each send is priced to absorb the cost of the rail
+being terminated at any time.
+
+- domestic (US, CA): 2900
+- international: 2900
+
+Flat in both directions: the rail is unlimited including international, so destination
+does not change the cost. Defaults assume `rail_replacement_usd = 4.99` and the
+operator-set multiplier `0.5`; the multiplier walks down as the abuse record stays clean.
+
+Authoritative values come from `sms.pricing` (which reads live BTC); the numbers above
+are defaults and must never be hardcoded by a client.
+
+## Capabilities — read these, do not assume
+
+v1 rail is a single personal JMP/Cheogram line, operated under an explicit operator
+override of JMP's automation policy (ADR-0002). It reports honestly:
+
+```
+best_effort:        true      # no retry guarantee
+delivery_receipts:  false     # NO delivery confirmation is possible
+countries:          [US, CA]
+```
+
+**A successful `sms.send` means "accepted by the rail", NOT "delivered".**
+Do not build delivery-dependent logic (OTP confirmation, escrow release on
+delivery) on this rail.
+
+## Payment (CEP-8)
+
+- Gating: `explicit_gating` — nothing is sent before payment lands.
+- `cap:tool:sms.send:100:sats` (domestic) / `:500:sats` (international).
+- PMI: `bitcoin-cashu` (primary).
+- Hard failures the rail can detect are auto-refunded; a `best_effort` miss is not.
+
+## Errors
+
+Every 4xx/5xx carries:
+
+- `X-Reason`: machine token — `insufficient_funds`, `bad_destination`,
+  `rail_not_configured`, `transport_error`, `rate_limited`, `owner_only`.
+- `X-Hint`: one human-readable sentence.
+
+## Data handling
+
+Destination numbers and message bodies are retained only for status lookups and
+refunds. No marketing use, no third-party sharing, no analytics.
+
+---
+*Contract version: v1 draft (2026-10-03). Owned by the operator; v1 rail is a
+personal line — treat volume limits as real.*
+
+---
+*Source of truth for the served `llms.txt` (commit 2026-10-05). Pricing section reflects ADR-0002 risk-premium pricing.*

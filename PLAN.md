@@ -151,3 +151,214 @@ send is gated on this card.
 - <https://jmp.chat/faq> — automation/business prohibition, numbers, SIP limitations (cached)
 - <https://bitcall.io/llms.txt>, `/llms-full.txt` — crypto payment, A2P SMS / DID / SIP catalogue (cached)
 - `~/repos/sms-gateway`, `~/handover-sms-gateway-india-operator.md`, `auditable-voting/web/src/otpDelivery/`
+
+---
+
+## 10. Machine-facing surfaces — paid CVM server + napplet (operator-ordered 2026-10-02)
+
+**Status:** queued. **Urgency: SOON** (operator, 2026-10-02: *"go, urgency: soon"*).
+Quota basis at classification: `zai-quota-gate.sh` exit 0, but the flat router was
+returning *all providers exhausted* for every model, so the work is release-gated on
+a **live completion probe**, not on the gate's verdict alone.
+
+Board `sms-gateway`: `t_119a4ab8` (CVM server), `t_4fa1415a` (napplet),
+`t_3ccdef32` (M1a, surface the HTTP API). All three release together via
+`nosms-m1a-release-watch.sh` when the router can actually serve.
+
+### 10.1 Why two surfaces, not one
+
+`cashu.email` is documented for machines (`llms.txt`) and driven by humans through a
+web page. nosms needs the *same* pair, but the two surfaces cannot share a client:
+an napplet runs in a sandbox with **no `fetch`, no WebSocket, no HTTP verb at all** —
+`NAP-RESOURCE` is `bytes`-in/`bytes`-out, so a `POST /api/send` with a JSON body is
+**not expressible** from a napplet (verified against the SDK types). The machine
+surface therefore has to be the Nostr transport, not the HTTP one.
+
+```
+napplet (UI only: no keys, no tokens, no network)
+  └─ shell NAP-CVM (`cvm` domain)   ← the shell signs, encrypts, pays
+        └─ paid CVM server (npub-addressed; kind 25910 JSON-RPC)
+              └─ Transport interface → email-to-SMS rail (best-effort) | Telnyx (post-KYC)
+```
+
+The HTTP API (§4) stays the surface for scripts, `curl` and LLMs that *do* have network
+access; the CVM surface is for in-shell clients. Both sit on the same `Transport`.
+
+### 10.2 CVM server
+
+- **Transport:** kind `25910` (ephemeral) for traffic; kinds `11316`–`11320` for the
+  CEP-6 service catalog so `cvmi discover` finds it. Discovery does **not** rely on the
+  ephemeral kind.
+- **Tools:** `sms.send` (paid), `sms.status` (free), `sms.pricing` + `sms.capabilities`
+  (free). `sms.capabilities` reports `best_effort` and `delivery_receipts` **from the
+  rail itself**, never hardcoded.
+- **Payment (CEP-8):** `cap:tool:sms.send:<sats>:sats` — 100 domestic / 500 international,
+  nosms parity. `pmi: bitcoin-cashu` first (Cashu-native, refund is a token, no LN node
+  needed); `bitcoin-lightning-bolt11` + NWC as a second PMI later. Lifecycle
+  `explicit_gating`: **nothing is sent before payment lands**, and a hard, detectable
+  failure triggers an automatic refund.
+- **Implementation:** Python + `nostr_sdk` bindings — verified 0.58 s gift-wrap round
+  trip; the TypeScript `NostrServerTransport` silently hangs (skill-documented).
+- **Constraints that bite:** client and server MUST use different keys (a shared key
+  echoes its own requests); `#p` filtering on kind 1059 is unreliable on some relays, so
+  subscribe broadly and filter client-side; working relays are `nostr.mom`,
+  `relay.primal.net`, `nos.lol`, `relay2.contextvm.org`, `relay.nostr.band` —
+  `relay.contextvm.org` is unreachable.
+
+### 10.3 Napplet
+
+- **Hard requirement:** `cvm` only. Every other domain optional, each shell call wrapped
+  in `try/catch` with an explicit fallback (a partial shell otherwise fails conformance).
+- **llms.txt parity:** `llms.txt` + `llms-full.txt` are bundled at build time (`?raw`)
+  **and** the live price + capability flags are read from the server, so the displayed
+  contract cannot drift from the server's actual behaviour. The "best effort, no
+  delivery receipt" warning is rendered from the server's own flags.
+- **One job:** destination, body, price shown *before* send, `sms.status` after.
+- **The napplet never holds a token or a key.** Payment runs through the shell's CEP-8
+  flow; any design that puts an ecash token in napplet `storage` is wrong by construction.
+- **Boundary hygiene:** no `nsec`, no `localStorage`, no direct `fetch`, no `window.nostr`.
+
+### 10.4 Exclusions and honesty constraints
+
+- **JMP/Cheogram is NOT service infrastructure.** Its FAQ prohibits automated or business
+  use. It stays the operator's personal number and the inbound-delivery QA rail. Shipping
+  a paid public service on it would break both the product and the ToS.
+- **The v1 rail has no delivery receipts.** Price and copy must say so on both surfaces;
+  a "delivered" claim we cannot observe is the one thing this service must never emit.
+- **No simulated data.** Capability flags, prices and statuses come from the live rail or
+  they are absent (standing operator rule).
+
+### 10.5 Milestones added
+
+| # | Scope | Exit criterion |
+|---|---|---|
+| **M5** | Paid CVM server: catalog announcement, `sms.pricing`/`sms.capabilities`/`sms.status`, then `sms.send` behind CEP-8 Cashu gating + refund on detectable failure | a second key pays a testnut token via `cvmi call` and a real SMS lands on a handset through the email rail, result honestly labelled best-effort |
+| **M6** | Napplet wrapping the CVM: one-screen sender + bundled `llms.txt`/`llms-full.txt` + live capability flags | `pnpm verify` + `pnpm test:conformance` green in a real sandbox (skips reported as skips), deployed to Blossom + relays, live call from inside Paja returns the server's real pricing |
+
+---
+
+## 11. JMP as a CVM rail — what it would take (answered 2026-10-05)
+
+**Status:** answered; one operator decision outstanding. **Urgency: SOON**
+(operator, 2026-10-05: *"plan now, build as soon as the freeze lifts"*).
+
+**Question (operator, 2026-10-05):** *"what would it take to make a cvm service for
+our JMP chat phone number integration?"*
+
+**Short answer: JMP cannot be the rail of a *public* CVM service — that was already
+decided (decision 9, §10.4). It can be the rail of a *private, owner-only* one, and
+that is a different, much smaller build.**
+
+### 11.1 The three variants
+
+| Variant | Rail | Payment | Status |
+|---|---|---|---|
+| **A. Public paid CVM** | email-to-SMS gateway (v1, best-effort) / Telnyx post-KYC | CEP-8 Cashu `explicit_gating`, 100/500 sats | carded: `t_119a4ab8` (server), `t_4fa1415a` (napplet) |
+| **B. Private owner-only CVM** | the operator's own JMP/Cheogram line | none — npub allowlist (`owner_only`) | **not built, not carded — needs operator decision (§11.4)** |
+| **C. JMP as inbound QA rail** | JMP | n/a | its assigned role; zero new work |
+
+### 11.2 Why JMP is excluded from A — live evidence, not opinion
+
+JMP's own FAQ, checked live 2026-09-23, verbatim:
+
+> "Can I use JMP for Automated or Business Purposes? **No**, the P2P routes we use to
+> exchange messages with the phone system must be [used directly by humans]; no
+> automations, marketing, or campaigns."
+
+Recorded in `skills/devops/programmatic-sms-delivery/SKILL.md` (provider table:
+*"JMP.chat … **ToS forbids the use case** … ❌ Rejected — do not build a service on
+it"*) and in PLAN decision 9. Also: **US/Canada numbers only**, and SMS/MMS is **not
+available over SIP**.
+
+### 11.3 What B would actually take
+
+The plumbing exists and is proven **for the inbound-reply direction**:
+
+- `~/.hermes/profiles/manager/scripts/jmp-sms-listener.py` (151 lines, slixmpp) holds a
+  long-lived XMPP client, logs every inbound SMS to SQLite, and already sends outbound
+  via `msg.reply(REPLY_TEXT).send()`.
+- Inbound SMS arrives as an ordinary XMPP chat message from `+<E164>@cheogram.com`
+  (`programmable-sms-rails/references/jmp-cheogram-xmpp-provisioning.md`).
+
+Missing pieces for a **cold** outbound send:
+
+1. **One live verification** that a cold message to `+<E164>@cheogram.com` (not a reply
+   to an inbound peer) is accepted — JMP's anti-abuse gate requires **one real inbound
+   text before the account may send** (provisioning ref). This is the single unverified link.
+2. **Owner allowlist** replacing the CEP-8 gate — the contract already reserves the
+   `owner_only` error token (`state/nosms-cvm-llms.txt` §Errors).
+3. **CVM server layer** reused as-is from §10.2 (kind 25910, announcements 11316–11320,
+   tools `sms.send` / `sms.status` / `sms.capabilities`); only the payment gate and the
+   `Transport` implementation change.
+4. **Honest capability flags** on both surfaces: `best_effort: true`,
+   `delivery_receipts: false`, `countries: [US, CA]`.
+
+**Effort:** ~1 worker card once M5's server exists; ~2 standalone. Cost is not the
+blocker — **the ToS is**: the prohibition is on *automated* use, not only business use,
+so B is grey-area even in private. Recommendation: B only as strictly personal,
+private, low-volume — or not at all.
+
+### 11.4 DECIDED (operator, 2026-10-05) — ship public, on the JMP rail
+
+Operator override, verbatim: *"I realize its not allowed, but lets do it anyway."*
+Recorded as **ADR-0002** (`docs/adr/0002-jmp-rail-override-and-risk-pricing.md`).
+
+- The **v1 rail IS the operator's own JMP/Cheogram line**, sold as a paid public CVM
+  service. This supersedes decision 9 and §10.4 **for the v1 rail only**.
+- Accepted risks are named in the ADR (termination, personal number, no receipts, US/CA
+  only, anti-abuse gate). The operator owns the decision; the agent implements.
+- Compensating controls: risk-premium pricing (§12), low volume pacing, degrade path to
+  the email rail behind the same `Transport`, auto-refund on paid-but-unsent, and no
+  delivery claims on any surface.
+- Variants (a) and (c) in the previous draft of this section are **superseded**; the
+  private owner-only variant (b) is subsumed — the service is public, the rail is JMP.
+
+### 11.5 Open question — repo home
+
+`cvm-service-kit` and `cvm-registry` now live under the **`cvm-services` org**; `nosms`
+still lives at `felixfelix-bot/nosms`. Should `nosms` move under the org once M5 lands?
+Not blocking; recorded so it does not get lost.
+
+### 11.6 Consultant review deferred — stated gap, not a silent one
+
+Three consultant subagents were dispatched 2026-10-05 00:58 to review this section
+independently (spec-fit, JMP rail reality, phased effort). All three returned
+**HTTP 503 `all providers exhausted (flat router)`, `capacity_exhausted: true`** after
+3 retries — zero output. This section therefore rests on **first-party file reads
+only**. Re-run the review when the router has capacity.
+
+---
+
+## 12. Pricing — rugpull-risk premium (operator-directed 2026-10-05)
+
+Operator instruction: *"make each sms half as costly as the sim card for the time being
+and we gradually lower the price if we find that abuse isn't an issue"*.
+
+**Formula** (authoritative source: `ADR-0002`; `sms.pricing` serves it live):
+
+```
+price_sats = ceil(MULT * rail_replacement_usd * sats_per_usd)
+```
+
+| Input | Value | Source |
+|---|---|---|
+| `rail_replacement_usd` | 4.99 | JMP plan: $4.99/mo unlimited in+out SMS/MMS **including international** (`sms-provider-matrix.md`, verified 2026-09-23) |
+| `MULT` | 0.5 (start) | operator directive |
+| `sats_per_usd` | live | Binance `BTCUSDT` — **86,462** at 2026-10-05 |
+
+**Default price: 0.5 x 4.99 = $2.495 -> 2,886 sats -> rounded 2,900 sats**, flat for
+domestic and international (JMP is unlimited incl. international, so destination no
+longer maps to cost — this **supersedes the earlier 100 / 500 sats split**).
+
+**Walk-down:** review every 100 sends; zero abuse flags -> `MULT` -0.05 (2,900 -> 2,600
+sats at today's BTC); any abuse event -> reset to 0.5 and hold 30 days; hard floor
+`max(rail marginal cost, 1,000 sats)`.
+
+**Rationale:** the price absorbs the cost of JMP terminating the account (the accepted
+risk in ADR-0002) — a handful of sends funds replacing the rail — and doubles as an
+economic spam filter on a personal line.
+
+**Load-bearing unknowns, stated:** the operator's "sim card" reference is read here as
+the rail's replacement cost (the JMP plan). If the intended basis was a one-off prepaid
+SIM purchase (a different number), only `rail_replacement_usd` changes; the formula and
+the walk-down are unaffected.

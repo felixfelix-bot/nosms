@@ -1,0 +1,25 @@
+[Unit]
+# The T+15 min auto-refund sweep (M1b). Idempotent: each refund is claimed with
+# a single conditional UPDATE, so an overlap with a previous run cannot pay out
+# twice. Triggered by nosms-refund-sweep.timer.
+Description=nosms auto-refund sweep (undelivered postage back to the payer)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=nosms
+Group=nosms
+WorkingDirectory=/opt/nosms
+# Same env file as the service: NOSMS_DB_PATH, NOSMS_MINT_URL, NOSMS_TRANSPORT,
+# NOSMS_REFUND_AFTER_SECONDS, NOSMS_SMS_GATEWAY_PATH, TELNYX_*.
+EnvironmentFile=-/etc/nosms.env
+ExecStart=/opt/nosms/.venv/bin/python /opt/nosms/scripts/refund_sweep.py
+# The script exits 1 only when the sweep could not run at all; a refund report is
+# printed as one JSON line into the journal either way.
+Nice=10
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/nosms

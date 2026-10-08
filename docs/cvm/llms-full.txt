@@ -1,0 +1,214 @@
+# nosms — full manual (llms-full.txt)
+
+This is the expandable companion to `llms.txt`. `llms.txt` is the contract; this
+file is the manual. Both are served by the CVM server (`docs` and `llms-full`
+tools, and as the resources `nosms://llms.txt` / `nosms://llms-full.txt`) and
+committed here so a human or an agent can read them without a relay.
+
+## 1. What the service is
+
+nosms sends one SMS to one phone number on behalf of a nostr key. There is no
+account, no API key and no signup: your nostr key is identity and you pay per
+message in sats, postage-style. The v1 rail is a single personal JMP/Cheogram
+line sold as a risk-priced service (ADR-0002), so treat volume limits as real.
+
+## 2. Two surfaces, one transport contract
+
+| Surface | Who uses it | How |
+|---|---|---|
+| ContextVM (MCP over Nostr, kind `25910`) | agents, in-shell clients | call the tools by server npub |
+| HTTP (`https://nosms.orangesync.tech`) | scripts, `curl`, LLMs with network access | NIP-98-authenticated `POST /api/send` |
+
+Both sit on the same `Transport` interface and the same price table, so a price
+or capability change cannot be visible on one surface and stale on the other.
+
+A napplet cannot use the HTTP surface: `NAP-RESOURCE` is bytes-in/bytes-out with
+no HTTP verb, so a `POST` with a body is not expressible from a sandboxed
+napplet. That is exactly why the napplet wraps the CVM.
+
+## 3. Tools
+
+### `sms.send(to, body, cashu_token?, settlement_receipt?)` — PAID
+
+- `to` — E.164 destination (`+14155550100`). Formatting is stripped; a value with
+  no digits, or too short to be a phone number, is `bad_destination`.
+- `body` — the message text (non-empty).
+- `cashu_token` — the ecash, in `cashuA…` (v3) or `cashuB…` (v4) encoding. The
+  service decodes it, checks the mint, checks NUT-07 proof states, charges the
+  NUT-02 input fee **to the sender**, and captures the value with a NUT-03 swap.
+- `settlement_receipt` — the shell's CEP-8 settlement receipt, for callers whose
+  shell already escrowed. Honoured only where the service has no mint to re-swap
+  against; otherwise pass `cashu_token`.
+
+Result fields:
+
+- `id` — the send record id, used with `sms.status`.
+- `to` — the normalised E.164 destination.
+- `price_sats` — what postage was taken (0 for the owner).
+- `accepted` — `true` when the rail accepted the message for dispatch.
+- `rail` — the rail name that accepted it.
+- `best_effort` — echoed from the rail's own capability flags.
+- `delivery_confirmed` — always `false` on a `best_effort` rail. Never a claim.
+- `refunded` / `refund_token` — set when a hard failure was refunded.
+- `status` — the rail's accept-time status (`queued`/`sent`/`delivered`/`failed`).
+
+### `sms.status(id)` — free
+
+Returns the stored send record: destination, price paid, rail, acceptance and
+any refund. It never claims delivery on a rail that cannot observe it.
+
+### `sms.pricing(to?)` — free
+
+Live price in sats. Returns `unit`, `model: "flat"`, the flat `price`, the raw
+`quote_sats` from the ADR-0002 formula with the `btc_usd` used, the `mult` and
+`rail_replacement_usd` inputs, the `floor_sats`, and — when `to` is given — the
+normalised destination and its price. An invalid destination is refused.
+
+### `sms.capabilities` — free
+
+The rail name and its capability flags, read from the rail itself:
+
+- `best_effort` — `true` means there is no retry guarantee.
+- `delivery_receipts` — `false` means NO delivery confirmation is possible.
+- `countries` — destinations the rail will attempt.
+
+### `docs` (alias `llms`) — free
+
+Returns the `llms.txt` contract verbatim. Callers must not need out-of-band
+knowledge: everything required to use the service is reachable from the server.
+
+### `llms-full` — free
+
+Returns this manual.
+
+### `jmp.status` — free, read-only
+
+The JMP funding facts, so nobody has to be handed a pasted address again:
+
+```json
+{"number": "(810) 258-3253", "number_state": "reserved",
+ "btc_address": "bc1qnq4mm4sh2vm8mjh2fa7yxcqn2ymz637mudpkfk",
+ "amount_btc": "0.000244", "amount_usd_min": "20.00",
+ "balance_usd": "0.00", "activation_state": "unfunded",
+ "as_of": "2026-09-26T21:20:00Z", "source": "cached",
+ "number_note": "...", "number_history": [...], "provenance": {...}}
+```
+
+- `source` is `cached` when the values came from the committed capture (and
+  `as_of` is then the capture time, not "now") and `live-flow` only when this
+  run really drove the flow. The two are never conflated.
+- `number_state` names the reservation for what it is: **session-scoped**. JMP
+  holds the number for the session that selected it and the offer changes
+  between runs; `number_history` carries every selection observed live, so the
+  caveat is data, not a footnote.
+- Read-only: roster + ad-hoc command discovery + the register command's form
+  text, all IQ `get`s. It never reserves a number and cannot spend.
+- A failed read-only probe is recorded in the payload (`live_attempt.ok: false`)
+  and the facts stay labelled `cached`.
+
+### `jmp.funding` — free, drives the flow
+
+Drives the `cheogram.com` ad-hoc command (`jabber:iq:register`) through number
+selection to the funding step and returns the same payload with
+`source: live-flow`. The flow selects the **bitcoin** activation method — which
+is what makes the bot print the deposit address and the minimum — and stops
+there. It is **incapable of spending**, and that is checked rather than claimed:
+the driver asserts, on the outgoing transcript, that no payment-shaped stanza
+was emitted (no card method, no card form, no out-of-band payment URL). A caller
+that cannot be driven gets `rail_unavailable`; cached values are never returned
+in place of a live-flow answer.
+
+### `jmp.credentials` — PAID (tier: financial), allow-listed
+
+The account's access material: `{jid, secret, secret_kind, number, issued_at,
+rotate_by, revoke_hint}`, **NIP-44 v2 encrypted to the requesting npub**.
+
+- The allow-list is checked **before** payment: an unauthorised caller is refused
+  with `owner_only` and the mint is never touched, so nobody can pay their way in.
+- The response carries only the ciphertext (`ciphertext`, `enc`, `to`,
+  `issued_at`, `rotate_by`, `revoke_hint`, and a `preconditions` report). The
+  plaintext is never on the wire: a CVM response is gift-wrapped over relays and
+  relays retain what they carry, so the operator's own key must be the only thing
+  that can open it.
+- The credential is read from the fleet store (OpenBao via `fleet_secret.py`).
+  It is never read from a plaintext file, and a missing credential fails closed
+  with `credential_unavailable` naming the store and the secret — this node has
+  no write capability on the vault, so populating it is an operator action.
+- `rotate_by` (issue + 90 days) and `revoke_hint` travel with every release; a
+  credential with no rotation story is a liability, so both are mandatory.
+
+## 4. Payment (CEP-8)
+
+- Gating: `explicit_gating`. An unpaid `sms.send` is answered with a visible
+  `payment_required` error carrying the `cap`, `pmi` and `gating` fields — never
+  silence.
+- Capability tags: `cap:tool:sms.send:2900:sats` (flat, ADR-0002).
+- PMI: `bitcoin-cashu` (primary). A Lightning PMI may be added later.
+- Refunds: a hard failure the rail can detect is refunded automatically. A
+  `best_effort` miss — the rail accepted and the carrier silently dropped the
+  message — is NOT refundable, because the rail cannot see it.
+- Owner allowlist: the operator's own npub sends free. Every other caller pays.
+
+## 5. Error contract
+
+Every refusal is a JSON-RPC `result` with `isError: true` and a body carrying a
+machine `reason` and a human `hint`. Reasons: `payment_required`,
+`insufficient_funds`, `bad_destination`, `destination_unsupported`,
+`rail_not_configured`, `transport_error`, `rail_unavailable`, `rail_paced`,
+`rate_limited`, `owner_only`,
+`token_invalid`, `token_wrong_mint`, `token_already_spent`, `token_state_unknown`,
+`mint_error`, `mint_unreachable`, `not_found`, `unsupported method`.
+
+The HTTP surface carries the same vocabulary as `X-Reason` / `X-Hint` headers.
+
+## 6. Honest limits (read before building on this)
+
+1. **No delivery receipts.** `sms.send` returning `accepted: true` means the rail
+   took the message. It does not mean the handset received it. Do not build OTP
+   confirmation, escrow release on delivery, or any delivery-dependent logic.
+2. **Best effort.** No retry guarantee.
+3. **One personal line.** Throughput is that of a single phone number.
+4. **Countries.** The rail reports what it will attempt (`[US, CA]`); it does not
+   guarantee coverage.
+5. **Termination risk.** The rail is a personal consumer line used as a paid
+   service against its operator's automation policy. It can be terminated at any
+   time; pricing and the degrade path to the email rail are the mitigations. On
+   the WhatsApp rail (ADR-0003) this is the operator's explicitly accepted risk.
+6. **Volume is paced, per rail.** Each rail carries its own persisted counter — a
+   daily cap plus a re-jittered minimum gap (`NOSMS_JMP_*` for the JMP line,
+   `NOSMS_WHATSAPP_*` for the WhatsApp line: two lines, two counters, never one
+   shared counter). A paced call is `rail_paced`: the message was not attempted,
+   so it is not charged, and the HTTP surface answers `429` with `Retry-After`.
+7. **A detected ban stops the rail, loudly.** The WhatsApp rail latches itself
+   off, persists the halt (a restart must not become the retry), logs
+   `CRITICAL` and alerts; every later send raises `rail_unavailable` with
+   `terminated` (banned) or `auth_failed` (unregistered client) and **never
+   retries** — a retry loop is what turns a ban warning into a permanent ban. A
+   human clears the halt to resume.
+8. **The serving rail is a config choice.** `NOSMS_TRANSPORT=whatsapp` (the paced
+   rail alone) or `NOSMS_TRANSPORT=whatsapp_email` (the same rail with the
+   ADR-0002 email degrade path behind it); `sms.capabilities` always reports the
+   rail that is actually serving.
+
+## 7. Data handling
+
+Destination numbers and message bodies are retained only for status lookups and
+refunds. No marketing use, no third-party sharing, no analytics. Message bodies
+on the HTTP surface are NIP-44-encrypted client-to-gateway and are never stored
+in plaintext at the service.
+
+## 8. Running the server
+
+```
+python3 scripts/run_cvm_server.py --relays wss://relay.contextvm.org \
+    wss://relay2.contextvm.org wss://relay.primal.net --announce
+python3 scripts/run_cvm_server.py            # then listen
+```
+
+The client and the server MUST use different nostr keys: a shared key makes the
+client receive its own gift-wrapped requests and the response correlation breaks.
+
+---
+*Manual version: v3 (2026-10-06). The authoritative values are always the live
+`sms.pricing` and `sms.capabilities` responses. v3 adds the per-rail pacing gate
+and the loud-stop rule (T4 of ADR-0003).*
