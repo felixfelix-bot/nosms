@@ -223,6 +223,12 @@ def cmd_register(args) -> int:
         if JMP_NUMBER not in shown:
             wa_ui.print_nodes(xml)
             fail_loud(f"phone field shows {shown!r}, expected {JMP_NUMBER} — abort before NEXT", args.out)
+    # capture the inbox baseline NOW, immediately before NEXT triggers the OTP
+    # send — if we read it later, a fast OTP could land at id <= baseline.
+    baseline_path = os.path.join(args.out, "otp_baseline.txt")
+    with open(baseline_path, "w") as f:
+        f.write(str(inbox_baseline()))
+    log(f"otp baseline {inbox_baseline()} persisted to {baseline_path}")
     log(f"field verified: {shown!r}; tapping NEXT")
     nxt = wa_ui.find(xml, text="NEXT", exact=True) or wa_ui.find(xml, text="next")
     if nxt is None:
@@ -248,12 +254,22 @@ def cmd_register(args) -> int:
 
 def cmd_otp(args) -> int:
     os.makedirs(args.out, exist_ok=True)
-    baseline = inbox_baseline()
-    log(f"inbox baseline id={baseline}")
+    # prefer the baseline persisted at NEXT-tap time (see cmd_register); the OTP
+    # can land in the gap between NEXT and this phase's own read.
+    baseline_path = os.path.join(args.out, "otp_baseline.txt")
+    if os.path.exists(baseline_path):
+        baseline = int(open(baseline_path).read().strip())
+        log(f"inbox baseline id={baseline} (persisted at NEXT-tap)")
+    else:
+        baseline = inbox_baseline()
+        log(f"inbox baseline id={baseline} (fresh read — WARNING: register phase did not persist one)")
     code = poll_otp(baseline, args.out)
     xml = dump_ui(os.path.join(args.out, "20_otp_screen.xml"))
     check_refusals(xml, args.out)
     entry = wa_ui.find(xml, rid="com.whatsapp:id/verification_code")
+    if entry is None:
+        # some builds present a plain editable code field without that id
+        entry = wa_ui.find(xml, rid="com.whatsapp:id/eula_prompt")
     if entry is None:
         wa_ui.print_nodes(xml)
         fail_loud("verification-code entry not found on screen", args.out)
