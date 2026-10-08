@@ -185,10 +185,11 @@ def cmd_register(args) -> int:
         time.sleep(2.5 if attempt == 1 else 5.0)
         xml = dump_ui(os.path.join(args.out, f"10{attempt}_focus_probe.xml"))
         node = wa_ui.find(xml, rid="com.whatsapp:id/registration_phone")
-        if node is not None and node["focused"] == "true":
+        if node is not None and node.get("focused") == "true":
             log(f"field focused on attempt {attempt}")
             break
-        log(f"field not focused after attempt {attempt} (focused={node['focused'] if node else 'gone'})")
+        log(f"field not focused after attempt {attempt} "
+            f"(focused={node.get('focused') if node else 'gone'})")
     else:
         wa_ui.print_nodes(xml)
         fail_loud("phone field would not take focus — abort before any OTP request", args.out)

@@ -38,3 +38,26 @@ Branch: wt/t_c930a683 (pushed to origin). Worktree: ~/repos/nosms/.worktrees/t_c
 - Next worker: when `ssh dq05 'cat /proc/loadavg'` shows 1-min < 4, run the
   runbook above top-to-bottom (~10 min). Everything is committed on
   wt/t_c930a683 (HEAD ba094df) — driver, harness wrapper, offline tests.
+
+## 2026-10-09 00:15 — run 172 (manager, load window opened): REGISTER BLOCKED — root cause found
+- dq05 load 3.67 → GATE PASS. Emulator already up (emulator-5554), WhatsApp 2.26.39.75,
+  phone-entry screen confirmed via `state` (US/+1, NEXT present).
+- `register` aborts fail-loud at its own focus check (correct: no OTP requested, ban risk ZERO).
+- Manual diagnosis (bounded, no retry loop):
+  * `input text` AND `input keyevent` digits BOTH drop — field never receives characters.
+  * `dumpsys input_method`: mServedView stuck on `menuitem_overflow` (or null), mInputShown=false —
+    the IME never starts serving the EditText. Taps land (window focus = RegisterPhone) but
+    view focus never transfers.
+  * Screenshot shows a green underline on the phone field in EVERY frame including pre-tap —
+    that is WhatsApp's static field styling, NOT a focus indicator. The prior "focus probe"
+    heuristic (underline = focused) is unreliable; `focused=false` in the dump was right.
+- ROOT CAUSE (structural): headless emulator + Gboard → EditText on WhatsApp's registration
+  screen does not take view focus from synthetic taps, so no text commits. Known class; the
+  standard fixes (pick one on the next pass):
+  1. **uiautomator2 (python) driven click + set_text** — accessibility click CAN set focus and
+     set_text bypasses the IME entirely. Preferred: no extra APK, same evidence path.
+  2. ADBKeyboard IME (broadcast text) — proven for headless WhatsApp automation, but adds an
+     APK and still needs focus for field targeting.
+- NEXT PASS: rewrite wa_register.py's interaction layer on uiautomator2 (keep the fail-loud
+  gates + refuse-lists verbatim), then rerun steps 4-9 of the runbook. Everything else is DONE:
+  boot wrapper, tunnel, OTP handoff, inbox baseline (id=4), evidence dir.

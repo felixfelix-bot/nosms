@@ -53,7 +53,7 @@ def nodes(xml: str):
         s = m.group(0)
         d = {}
         for k in ("text", "content-desc", "class", "resource-id", "clickable",
-                  "bounds", "enabled", "focusable", "password"):
+                  "bounds", "enabled", "focusable", "focused", "password"):
             r = re.search(k + r'="([^"]*)"', s)
             d[k] = r.group(1) if r else ""
         for k in ("text", "content-desc"):
