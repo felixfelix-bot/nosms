@@ -32,6 +32,7 @@ import glob
 import json
 import os
 import re
+import shlex
 import sqlite3
 import subprocess
 import sys
@@ -91,6 +92,35 @@ def dump_ui(path: str) -> str:
 def screenshot(path: str) -> None:
     wa_ui.adb("shell", "screencap -p /sdcard/wa_ev.png", timeout=60)
     wa_ui.adb("pull", "/sdcard/wa_ev.png", path, timeout=60)
+
+
+# --- uiautomator2 interaction layer (run-173 fix path (1)) -----------------
+# Run-172 root cause: on the headless guest, synthetic `input tap` never gives
+# the WhatsApp EditText view focus (mServedView stuck on menuitem_overflow,
+# mInputShown=false), so `input text` AND keyevent digits both silently drop.
+# Fix: interaction goes through uiautomator2 ON dq05 — an accessibility click
+# sets real focus and ACTION_SET_TEXT bypasses the IME entirely. u2's sockets
+# bind to the adb server (dq05), so the probe runs there over ssh and only a
+# JSON result crosses the boundary. NO gates/halt/refuse logic lives there.
+U2_PY = os.environ.get("U2_PY", "~/wa_u2_venv/bin/python")
+U2_PROBE = os.environ.get("U2_PROBE", "/tmp/u2_probe.py")
+
+
+def u2(action: str, *args: str) -> dict:
+    """Run one u2 primitive on dq05; return its JSON result (last stdout line)."""
+    argline = " ".join(shlex.quote(a) for a in (action, *args))
+    p = subprocess.run(
+        ["ssh", "dq05", f"{U2_PY} {U2_PROBE} {argline}"],
+        capture_output=True, text=True, timeout=120)
+    lines = [l for l in p.stdout.strip().splitlines() if l.strip()]
+    if p.returncode != 0 or not lines:
+        raise RuntimeError(
+            f"u2 {action!r} failed rc={p.returncode}: {p.stderr.strip()[-400:]}")
+    try:
+        return json.loads(lines[-1])
+    except json.JSONDecodeError:
+        raise RuntimeError(f"u2 {action!r} non-JSON output: {lines[-1][:200]}")
+
 
 
 def check_refusals(xml: str, out_dir: str) -> None:
@@ -175,67 +205,37 @@ def cmd_register(args) -> int:
         # maybe already past this screen — dump and fail loudly with context
         wa_ui.print_nodes(xml)
         fail_loud("phone-entry field not on screen — registration state unexpected", args.out)
-    log("tapping phone field and typing number")
-    # Prior-run lesson (05*.xml): tap+type silently failed to focus/land when the
-    # box was laggy — all 4 attempts show focused=false, text=hint. Verify focus
-    # BEFORE typing and digits BEFORE NEXT. Re-tapping the empty field is
-    # ban-safe; only NEXT triggers the OTP send.
-    for attempt in (1, 2):
-        wa_ui.tap(*wa_ui.center(phone_node["bounds"]))
-        time.sleep(2.5 if attempt == 1 else 5.0)
-        xml = dump_ui(os.path.join(args.out, f"10{attempt}_focus_probe.xml"))
-        node = wa_ui.find(xml, rid="com.whatsapp:id/registration_phone")
-        if node is not None and node.get("focused") == "true":
-            log(f"field focused on attempt {attempt}")
-            break
-        log(f"field not focused after attempt {attempt} "
-            f"(focused={node.get('focused') if node else 'gone'})")
-    else:
-        wa_ui.print_nodes(xml)
-        fail_loud("phone field would not take focus — abort before any OTP request", args.out)
-    wa_ui.adb("shell", "input keyevent KEYCODE_MOVE_END")
-    for _ in range(12):
-        wa_ui.adb("shell", "input keyevent 67")  # DEL any stray digits
-    wa_ui.adb("shell", f"input text {JMP_NUMBER}")
-    time.sleep(2.0)
-    xml = dump_ui(os.path.join(args.out, "11_number_typed.xml"))
-    check_refusals(xml, args.out)
-    # verify the digits landed before touching NEXT
-    typed = wa_ui.find(xml, rid="com.whatsapp:id/registration_phone")
-    shown = "".join(re.findall(r"\d", typed["text"])) if typed else ""
+    log("phone-entry screen confirmed; entering number via uiautomator2")
+    # Run-172 lesson: `input tap` never focuses this EditText on the headless
+    # guest (accessibility focus transfer is the ONLY thing that works). u2's
+    # click sets real view focus; set_text (ACTION_SET_TEXT) bypasses the IME.
+    # Field edits NEVER trigger an OTP — only NEXT/OK does — so one bounded
+    # re-entry attempt stays ban-safe.
+    res = u2("set-text", "com.whatsapp:id/registration_phone", JMP_NUMBER)
+    log(f"set-text result: text={res.get('text')!r}")
+    info = u2("info", "com.whatsapp:id/registration_phone")
+    shown = "".join(re.findall(r"\d", info.get("text") or ""))
     if JMP_NUMBER not in shown:
-        # one ban-safe re-focus + re-type (field edits never send an OTP)
-        log(f"field shows {shown!r} after typing; one re-focus attempt")
-        if typed:
-            wa_ui.tap(*wa_ui.center(typed["bounds"]))
-            time.sleep(2.5)
-            wa_ui.adb("shell", "input keyevent KEYCODE_MOVE_END")
-            for _ in range(12):
-                wa_ui.adb("shell", "input keyevent 67")
-        else:
-            wa_ui.tap(*wa_ui.center(phone_node["bounds"]))
-            time.sleep(2.5)
-        wa_ui.adb("shell", f"input text {JMP_NUMBER}")
-        time.sleep(2.0)
-        xml = dump_ui(os.path.join(args.out, "11b_number_typed.xml"))
-        check_refusals(xml, args.out)
-        typed = wa_ui.find(xml, rid="com.whatsapp:id/registration_phone")
-        shown = "".join(re.findall(r"\d", typed["text"])) if typed else ""
+        log(f"field shows {shown!r}; one ban-safe re-entry attempt")
+        res = u2("set-text", "com.whatsapp:id/registration_phone", JMP_NUMBER)
+        info = u2("info", "com.whatsapp:id/registration_phone")
+        shown = "".join(re.findall(r"\d", info.get("text") or ""))
         if JMP_NUMBER not in shown:
+            xml = dump_ui(os.path.join(args.out, "11_number_failed.xml"))
             wa_ui.print_nodes(xml)
             fail_loud(f"phone field shows {shown!r}, expected {JMP_NUMBER} — abort before NEXT", args.out)
+    xml = dump_ui(os.path.join(args.out, "11_number_typed.xml"))
+    check_refusals(xml, args.out)
     # capture the inbox baseline NOW, immediately before NEXT triggers the OTP
     # send — if we read it later, a fast OTP could land at id <= baseline.
+    baseline = inbox_baseline()
     baseline_path = os.path.join(args.out, "otp_baseline.txt")
     with open(baseline_path, "w") as f:
-        f.write(str(inbox_baseline()))
-    log(f"otp baseline {inbox_baseline()} persisted to {baseline_path}")
+        f.write(str(baseline))
+    log(f"otp baseline {baseline} persisted to {baseline_path}")
     log(f"field verified: {shown!r}; tapping NEXT")
-    nxt = wa_ui.find(xml, text="NEXT", exact=True) or wa_ui.find(xml, text="next")
-    if nxt is None:
-        wa_ui.print_nodes(xml)
-        fail_loud("NEXT button not found after typing number", args.out)
-    wa_ui.tap(*wa_ui.center(nxt["bounds"]))
+    res = u2("click-text", "NEXT")
+    log(f"NEXT click: {res}")
     time.sleep(4)
     xml = dump_ui(os.path.join(args.out, "12_after_next.xml"))
     check_refusals(xml, args.out)
@@ -244,12 +244,12 @@ def cmd_register(args) -> int:
     # allow the confirm-dialog variant
     if wa_ui.find(xml, text="OK") and wa_ui.find(xml, text="confirm", exact=False):
         log("confirmation dialog detected; tapping OK")
-        ok = wa_ui.find(xml, text="OK")
-        wa_ui.tap(*wa_ui.center(ok["bounds"]))
+        res = u2("click-text", "OK")
+        log(f"OK click: {res}")
         time.sleep(4)
         xml = dump_ui(os.path.join(args.out, "13_after_confirm.xml"))
         check_refusals(xml, args.out)
-    log("register phase done — now run the otp phase (baseline captured next)")
+    log("register phase done — now run the otp phase (baseline captured at NEXT-tap)")
     return 0
 
 
@@ -274,8 +274,9 @@ def cmd_otp(args) -> int:
     if entry is None:
         wa_ui.print_nodes(xml)
         fail_loud("verification-code entry not found on screen", args.out)
-    log(f"typing code {code}")
-    wa_ui.adb("shell", f"input text {code}")
+    log(f"typing code {code} via uiautomator2")
+    res = u2("set-text", entry["resource-id"], code)
+    log(f"set-text result: text={res.get('text')!r}")
     time.sleep(6)
     xml = dump_ui(os.path.join(args.out, "21_code_typed.xml"))
     check_refusals(xml, args.out)
