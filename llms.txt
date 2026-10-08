@@ -20,6 +20,70 @@ via its `docs` tool: `docs/cvm/llms.txt` in this repo, and
 at runtime. Both surfaces share one price table and one `Transport`, so the same
 numbers and the same capability flags apply to both.
 
+## Paying — accepted rails
+
+| Rail | Direction | Status |
+|---|---|---|
+| Cashu token (escrow, testnut mint) | in | live |
+| Lightning (bolt11 invoice, or LNURL-pay) | in | sats modules implemented + tested; wired at M1 |
+| **Machankura (`8333.mobi`) lightning address** | in + **refund out** | sats modules implemented + tested; wired at M1 |
+
+### Machankura / `8333.mobi` lightning addresses
+
+Machankura is a Bitcoin/Lightning wallet reachable from any phone over USSD
+shortcodes (`*483*8333#` Kenya, `*347*8333#` Nigeria, `*384*8333#`
+Malawi/Zambia, `*142*8333#` Namibia, `*9141#` Côte d'Ivoire, `*920*8333#`
+Ghana, `54052.co.za` South Africa) and SMS long numbers (Tanzania
+`+255 679 066 977`, Uganda `+256 744 830 624`). No app, no internet.
+
+Every Machankura user therefore has a **lightning address**:
+
+    <phone in international format, no plus>@8333.mobi      e.g. 255679066977@8333.mobi
+    <username>@8333.mobi                                    e.g. sigidli@8333.mobi
+
+which resolves through the standard LNURL-pay endpoint:
+
+    GET https://8333.mobi/.well-known/lnurlp/<identifier>
+
+**This is the rail for people who have a handset but no internet and no
+email.** They can pay us in sats from their keypad, and we can push a sat
+refund back to their phone number instead of only issuing a Cashu token.
+
+nosms accepts a `8333.mobi` address in two places:
+
+1. **As the payer's identity for an order.** The address is how we know who
+   paid and, if the message cannot be delivered, where the postage goes back.
+   Paying is done by the payer from their own handset (they receive a bolt11
+   invoice or a lightning address through SMS/USSD reachable rails; they
+   cannot open a URL, so never send them one).
+2. **As a refund destination.** On non-delivery (T+15 min) the escrow is
+   refunded to the payer's lightning address — Machankura included.
+
+`commentAllowed` on Machankura is `60`, so a payer can attach a short comment
+to a payment. For a USSD/SMS user that comment is the only data channel we
+have; nosms uses it for an order reference. A comment longer than the
+advertised limit is **refused before the request is sent**, never silently
+truncated — a silently dropped reference code is worse than a loud failure.
+Operational refund reasons are the exception: they are truncated to fit, since
+failing a refund over a long sentence would strand the payer's sats.
+
+#### Read this before relying on a Machankura refund
+
+- **A sat refund to a phone number is irreversible.** It settles to whoever
+  controls that SIM at that moment. There is no chargeback, no reversal, no
+  support line that can pull sats back.
+- **The address is only valid while that user is on Machankura.** An address
+  that resolved yesterday can answer `404 {"status":"error","reason":"User
+  <x> doesn't use the Machankura service."}` today. nosms therefore resolves
+  the address **immediately before paying** and never pays a cached invoice.
+- **Refunds are idempotent.** One refund key settles at most once: a re-run
+  (retry, crash recovery, operator re-click) replays the recorded receipt and
+  does not move sats again. The `8333.mobi` endpoint is the only Machankura
+  surface nosms depends on — there is no public HTTP send API (`/api` → 404)
+  and no account.
+- Refund policy is otherwise unchanged: postage is refunded when the message
+  is not delivered, and the refund goes back to the rail the payer used.
+
 ## Endpoints
 
 - `GET  /api/health`   -> JSON {service, version, commit, transport, mint, ok}. Open, cheap, no outbound calls.

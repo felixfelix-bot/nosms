@@ -1,8 +1,13 @@
 __pycache__/
-*.pyc
-.coverage
-coverage.xml
+*.py[cod]
 .pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+*.egg-info/
+build/
+dist/
 .venv/
 venv/
 .evidence/
