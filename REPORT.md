@@ -6,3 +6,4 @@
 - Per the safety contract, stopped without retries. Registration is not complete. Do not claim registered state or OTP success.
 - Evidence from this pass is under `tools/whatsapp/evidence/e2/`, including `otp_baseline.txt`, `11_number_typed.xml`, `12_after_next.xml`, and diagnostic evidence.
 - Remaining step: diagnose why WhatsApp's NEXT remains on the phone-entry screen, then make one carefully gated pass only after proving the button transition works. If a voice-call/VoIP refusal appears, stop immediately and do not retry.
+- Verification: `.venv/bin/python -m pytest` passed: 647 tests, 87.11% coverage, 1 deprecation warning. The first bare `pytest` was blocked by the unprovisioned environment; the worktree `.venv` was created with uv and required test dependencies installed.
