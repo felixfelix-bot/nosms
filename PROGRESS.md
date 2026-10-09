@@ -63,3 +63,4 @@ Branch: wt/t_c930a683 (pushed to origin). Worktree: ~/repos/nosms/.worktrees/t_c
 - NEXT PASS: rewrite wa_register.py's interaction layer on uiautomator2 (keep the fail-loud
   gates + refuse-lists verbatim), then rerun steps 4-9 of the runbook. Everything else is DONE:
   boot wrapper, tunnel, OTP handoff, inbox baseline (id=4), evidence dir.
+bounded NEXT selector and Enter both left WhatsApp on phone-entry screen; no OTP requested -> diagnostic evidence captured -> tools/whatsapp/bounded_next_probe.py, tools/whatsapp/evidence/e2/next_probe/*

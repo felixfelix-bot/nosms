@@ -1,9 +1,9 @@
 # Task report — t_c930a683
 
-- Updated `tools/whatsapp/wa_register.py` to validate the phone digits from the `set-text` response instead of issuing a fragile follow-up uiautomator2 `info` RPC. The remote atx-agent disconnected on that follow-up despite successfully returning `(810) 294-4652` from `set-text`.
-- Verified the load gate passed (`dq05` 1-minute load 2.51), WhatsApp is installed as version `2.26.39.75`, and the registration screen was present.
-- Ran the registration phase once with the live number `(810) 294-4652`; uiautomator2 set the field correctly and persisted inbox baseline `4`. The NEXT accessibility click returned success, but the UI remained on the phone-entry screen and the JMP inbox remained at max id `4`; no OTP was requested or received.
-- Per the safety contract, stopped without retries. Registration is not complete. Do not claim registered state or OTP success.
-- Evidence from this pass is under `tools/whatsapp/evidence/e2/`, including `otp_baseline.txt`, `11_number_typed.xml`, `12_after_next.xml`, and diagnostic evidence.
-- Remaining step: diagnose why WhatsApp's NEXT remains on the phone-entry screen, then make one carefully gated pass only after proving the button transition works. If a voice-call/VoIP refusal appears, stop immediately and do not retry.
-- Verification: `.venv/bin/python -m pytest` passed: 647 tests, 87.11% coverage, 1 deprecation warning. The first bare `pytest` was blocked by the unprovisioned environment; the worktree `.venv` was created with uv and required test dependencies installed.
+- Confirmed dq05 was below the registration load gate (load 1.96 at the host check) and the emulator was running on `emulator-5554`.
+- The live UI was WhatsApp phone-entry with the already-entered number redacted in captured evidence and a visible `NEXT` button (`com.whatsapp:id/button_view`).
+- Ran exactly one bounded diagnostic: accessibility selector click on `text="NEXT"`, waited up to 10 seconds, then the authorized single fallback (`Enter`) after restoring the field. Neither changed the WhatsApp view hierarchy; no OTP request or registration attempt occurred.
+- No retry loop, resend, voice call, or refusal path was triggered. Emulator was torn down via the canonical harness; userdata was preserved.
+- Added `tools/whatsapp/bounded_next_probe.py` and sanitized evidence in `tools/whatsapp/evidence/e2/next_probe/` (`before.xml`, `after_selector.xml`, `after_enter.xml`, `result.jsonl`). Phone values are redacted in XML evidence.
+- The registration acceptance criteria remain unmet: no OTP, no registered state. Task must remain blocked pending diagnosis of why WhatsApp's valid-looking NEXT button does not transition.
+- Verification: bounded probe returned rc=0; evidence records report `changed=false` for both attempts. Existing test suite was previously recorded as 647 passing in this worktree; no product registration was claimed.

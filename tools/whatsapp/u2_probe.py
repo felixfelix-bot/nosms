@@ -53,12 +53,26 @@ def main() -> int:
     if action == "info":
         el = d(resourceId=args[0])
         ex = bool(el.exists)
+        info = el.info if ex else {}
         emit({
             "ok": True,
             "exists": ex,
-            "focused": (el.info.get("focused") if ex else None),
+            "focused": info.get("focused"),
+            "enabled": info.get("enabled"),
+            "clickable": info.get("clickable"),
+            "bounds": info.get("visibleBounds") and {
+                "left": info["visibleBounds"]["left"],
+                "top": info["visibleBounds"]["top"],
+                "right": info["visibleBounds"]["right"],
+                "bottom": info["visibleBounds"]["bottom"],
+            },
             "text": (el.get_text() if ex else None),
         })
+        return 0
+
+    if action == "click-xy":
+        d.click(int(args[0]), int(args[1]))
+        emit({"ok": True})
         return 0
 
     if action == "click-id":
