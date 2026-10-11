@@ -246,3 +246,109 @@ def test_an_unconfigured_rail_is_rail_not_configured():
     assert body_of(tools.call("sms.capabilities"))["available"] is False
     body = body_of(tools.call("sms.send", {"to": US, "body": "hi"}, caller=CALLER))
     assert body["reason"] == "rail_not_configured", body
+
+
+# --- review round 1 (cold cross-family review of PR #12) ----------------------
+#
+# Three findings, all in code THIS change introduced. Each is the same mistake
+# in a different place: a promise the docstring makes, that the code breaks as
+# soon as the rail RAISES instead of politely answering.
+
+class RaisingLink(StubLink):
+    """A link whose ``start()`` RAISES — what a real XMPP connect can do.
+
+    ``StubLink`` answers ``False``; the live stack can also raise (DNS failure,
+    a cancelled connect, slixmpp blowing up inside its own session). The
+    lifecycle promises to treat both the same way: rail trouble is not fatal.
+    """
+
+    def __init__(self, exc: Exception | None = None, close_raises: bool = False):
+        super().__init__(connects=False)
+        self.exc = exc if exc is not None else RuntimeError("xmpp connect blew up")
+        self.close_raises = close_raises
+
+    def start(self, timeout: float | None = None) -> bool:
+        self.start_calls.append(timeout)
+        raise self.exc
+
+    def close(self) -> None:
+        self.closed = True
+        if self.close_raises:
+            raise RuntimeError("close blew up")
+
+
+def test_a_raising_start_is_not_fatal_to_the_free_surface(monkeypatch, tmp_path):
+    """`base.Transport` promises rail failure is NOT fatal — a raise must obey it.
+
+    Before this round, ``transport.start()`` was called with no guard: a raising
+    start escaped ``start_transport`` -> ``started_transport`` -> ``main()`` and
+    killed the process, taking the FREE tools (docs / pricing / capabilities)
+    down with it. The documented contract is the opposite: the free surface
+    keeps answering and ``available`` stays false.
+    """
+    transport, _ = jmp_rail(monkeypatch, tmp_path, RaisingLink())
+
+    assert runner.start_transport(transport, timeout=5.0) is False   # not a raise
+    tools = cvm(transport)
+    assert body_of(tools.call("sms.capabilities"))["available"] is False
+    assert body_of(tools.call("sms.pricing"))["price"] == DEFAULT_PRICE_SATS
+    assert body_of(tools.call("sms.send", {"to": US, "body": "hi"},
+                              caller=CALLER))["reason"] == "rail_unavailable"
+
+
+def test_the_lifecycle_closes_even_when_start_raises(monkeypatch, tmp_path):
+    """A leaked XMPP session is a second device on a personal line.
+
+    ``started_transport`` says ``close()`` is on EVERY exit path; a failing
+    start is an exit path. Leaking the session is the exact harm this lifecycle
+    exists to prevent.
+    """
+    link = RaisingLink()
+    transport, _ = jmp_rail(monkeypatch, tmp_path, link)
+
+    with runner.started_transport(transport, timeout=5.0):
+        pass
+    assert link.closed
+
+
+def test_the_jmp_rail_close_never_raises_even_when_the_link_does():
+    """`base.Transport.close` is documented idempotent AND never-raising.
+
+    ``close()`` runs in a ``finally:``. A raise there REPLACES whatever
+    exception was already in flight — so the failure you actually needed to see
+    is the one you lose.
+    """
+    link = RaisingLink(close_raises=True)
+    transport = JmpCheogramTransport(link)
+
+    transport.close()                              # must not raise
+    assert link.closed
+
+
+def test_the_degrade_stack_reports_ready_when_only_the_fallback_can_serve():
+    """A stack whose primary is down but whose fallback can serve IS ready.
+
+    ``FailoverTransport.capabilities`` already falls back to the fallback's
+    flags (``available: True``), so a ``start()`` that answered false here
+    contradicted the stack's own capability report — and printed a spurious
+    RAIL DOWN for a service that was working.
+    """
+    primary = JmpCheogramTransport(StubLink(connects=False))
+    stack = FailoverTransport(primary, EmailGatewayTransport())
+
+    assert stack.capabilities.available is True
+    assert stack.start(timeout=1.0) is True
+
+
+def test_the_degrade_stack_closes_the_fallback_even_if_the_primary_raises():
+    """Both rails own their cleanup; one blowing up must not strand the other."""
+    class CloseRaisingLink(StubLink):
+        def close(self):
+            self.closed = True
+            raise RuntimeError("primary close blew up")
+
+    primary_link = CloseRaisingLink()
+    stack = FailoverTransport(JmpCheogramTransport(primary_link), EmailGatewayTransport())
+
+    stack.close()                                  # must not raise
+    assert primary_link.closed

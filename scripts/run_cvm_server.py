@@ -164,9 +164,16 @@ def start_transport(transport, timeout: float | None = START_TIMEOUT_SECONDS) ->
     reason is printed loudly, because a rail that fails silently is exactly the
     failure mode that hid this bug for a whole session.
     """
-    ready = bool(transport.start(timeout=timeout))
+    try:
+        ready = bool(transport.start(timeout=timeout))
+        reason = None if ready else (rail_refusal_reason(transport) or "no reason given")
+    except Exception as exc:                       # noqa: BLE001 -- see docstring
+        # A rail that RAISES is the same fact as a rail that answers False, and
+        # the contract above makes that fact non-fatal. Letting it propagate
+        # killed the WHOLE server before it served anything -- taking the free
+        # tools, which need no rail at all, down with it.
+        ready, reason = False, f"start raised {type(exc).__name__}: {exc}"
     if not ready:
-        reason = rail_refusal_reason(transport) or "no reason given"
         print(f"[nosms-cvm] RAIL DOWN ({reason}): {transport.name} cannot serve "
               f"sms.send; the free tools stay up and sms.capabilities.available "
               f"is false", file=sys.stderr, flush=True)
@@ -181,8 +188,8 @@ def started_transport(transport, timeout: float | None = START_TIMEOUT_SECONDS):
     early return, because this rail's session is a *personal* line: a process
     that exits leaving its XMPP session behind is a second device on it.
     """
-    start_transport(transport, timeout=timeout)
     try:
+        start_transport(transport, timeout=timeout)
         yield transport
     finally:
         transport.close()

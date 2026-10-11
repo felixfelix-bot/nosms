@@ -116,13 +116,22 @@ class FailoverTransport:
     def start(self, timeout: float | None = None) -> bool:
         """Start both rails. The primary owns the connection; the fallback is
         stateless, so its start is a no-op and its answer is always True."""
-        self.fallback.start(timeout=timeout)
-        return bool(self.primary.start(timeout=timeout))
+        primary_ok = bool(self.primary.start(timeout=timeout))
+        fallback_ok = bool(self.fallback.start(timeout=timeout))
+        # `or`: a stack whose primary is down but whose fallback can serve IS
+        # ready -- that is exactly what `capabilities` already reports, and
+        # answering false here printed a spurious RAIL DOWN for a working stack.
+        return primary_ok or fallback_ok
 
     def close(self) -> None:
         """Close both. The fallback holds nothing, and closing is idempotent."""
-        self.primary.close()
-        self.fallback.close()
+        for rail in (self.primary, self.fallback):
+            try:
+                rail.close()
+            except Exception:                      # base.py:97: never raises
+                # One rail blowing up must not strand the other's cleanup.
+                logger.warning("nosms failover: %s close raised", rail.name,
+                               exc_info=True)
 
     @property
     def unavailable_reason(self) -> str | None:

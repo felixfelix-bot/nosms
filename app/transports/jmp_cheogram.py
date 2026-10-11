@@ -31,6 +31,7 @@ the process holding the XMPP session — no second daemon to keep in step.
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Protocol, runtime_checkable
 
@@ -38,6 +39,8 @@ from .base import Capabilities, SendResult
 from .errors import RailPaced, RailUnavailable, UnsupportedDestination
 from .nanp import is_us_ca
 from .pacing import Pacer
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["JmpCheogramTransport", "JmpLink", "RAIL_UNAVAILABLE_PREFIX",
            "is_rail_down", "DEFAULT_PACING_STATE"]
@@ -182,8 +185,15 @@ class JmpCheogramTransport:
         which is exactly what JMP would see as automation.
         """
         closer = getattr(self.link, "close", None)
-        if closer is not None:
+        if closer is None:
+            return
+        try:
             closer()
+        except Exception:                          # base.py:97: never raises
+            # close() runs in a `finally:`. A raise here REPLACES the exception
+            # already in flight, so the real failure is the one you lose.
+            logger.warning("nosms jmp: link close raised (already shutting down)",
+                           exc_info=True)
 
     @property
     def unavailable_reason(self) -> str | None:
