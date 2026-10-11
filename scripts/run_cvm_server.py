@@ -4,6 +4,20 @@ Wire layer only: it owns the relay client, the gift-wrap envelope, the CEP-6
 announcements, and dispatch into :mod:`app.cvm_rpc` / :mod:`app.cvm_tools`. The
 tool logic is pure and lives in the modules under test.
 
+Lifecycle
+---------
+``build_transport`` is a pure factory: it constructs a rail and opens nothing.
+The rail is brought up by :func:`started_transport` — the process that serves is
+the process that holds the session — and closed on every exit path. **Not**
+starting it was a live bug (2026-10-11): the JMP link was never connected, so
+``sms.capabilities.available`` was ``False`` for the whole process and
+``sms.send`` refused ``rail_not_configured`` on every call, before the CEP-8
+payment gate was ever reached, while every free tool answered normally.
+
+A rail that cannot come up does not stop the server: the free tools keep
+answering, ``sms.capabilities`` honestly reports ``available: false`` and
+``sms.send`` answers ``rail_unavailable:<reason>``.
+
 Usage
 -----
     # publish the CEP-6 catalog and exit
@@ -21,6 +35,7 @@ CVM_OWNER_PUBKEYS   comma-separated hex pubkeys that send free (the operator).
 NOSMS_MINT_URL      mint every postage token is escrowed against.
 NOSMS_TRANSPORT     rail name: jmp | email_gateway | telnyx | whatsapp | fake.
 CVM_BTC_USD         live BTC/USD used by sms.pricing for the quote.
+NOSMS_RAIL_START_TIMEOUT  seconds to wait for the rail's link (default 45).
 
 Protocol notes measured 2026-10-04/05 (python nostr_sdk 0.44.x):
 * ``ClientBuilder().build()`` is SYNC (not awaitable).
@@ -38,6 +53,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import os
 import pathlib
@@ -63,8 +79,12 @@ from app.cvm_rpc import handle_rpc                                 # noqa: E402
 from app.cvm_tools import CvmTools                                 # noqa: E402
 from app.escrow import EscrowStore                                 # noqa: E402
 from app.cashu import MintClient                                   # noqa: E402
+from app.transports.base import rail_refusal_reason                # noqa: E402
 
 CONTRACT_DIR = REPO / "docs" / "cvm"
+
+#: How long to wait for a rail's link (the JMP XMPP session) to come up.
+START_TIMEOUT_SECONDS = 45.0
 
 
 def load_docs() -> dict[str, str]:
@@ -131,6 +151,43 @@ def p_tag_of(event) -> str | None:
     return None
 
 
+def start_transport(transport, timeout: float | None = START_TIMEOUT_SECONDS) -> bool:
+    """Bring the rail up BEFORE the first tool call is served.
+
+    See the module docstring: this call is the whole fix for the live
+    ``rail_not_configured``-on-every-call bug. The rail answers for itself
+    (:meth:`app.transports.base.Transport.start`) — a stateless rail is a no-op,
+    the JMP/Cheogram rail starts its long-lived XMPP link.
+
+    A rail that cannot come up is NOT fatal: the free tools keep answering and
+    ``sms.capabilities.available`` stays ``false``, which is the truth. The
+    reason is printed loudly, because a rail that fails silently is exactly the
+    failure mode that hid this bug for a whole session.
+    """
+    ready = bool(transport.start(timeout=timeout))
+    if not ready:
+        reason = rail_refusal_reason(transport) or "no reason given"
+        print(f"[nosms-cvm] RAIL DOWN ({reason}): {transport.name} cannot serve "
+              f"sms.send; the free tools stay up and sms.capabilities.available "
+              f"is false", file=sys.stderr, flush=True)
+    return ready
+
+
+@contextlib.contextmanager
+def started_transport(transport, timeout: float | None = START_TIMEOUT_SECONDS):
+    """The rail's lifetime: start it for the run, close it on the way out.
+
+    ``close()`` is registered for every exit path, including the ``--announce``
+    early return, because this rail's session is a *personal* line: a process
+    that exits leaving its XMPP session behind is a second device on it.
+    """
+    start_transport(transport, timeout=timeout)
+    try:
+        yield transport
+    finally:
+        transport.close()
+
+
 async def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--relays", nargs="+", default=list(WORKING_RELAYS))
@@ -145,6 +202,9 @@ async def main() -> int:
         "NOSMS_CVM_CONTRACT_URL", "https://nosms.orangesync.tech/cvm/llms.txt"))
     ap.add_argument("--btc-usd", type=float,
                     default=float(os.environ["CVM_BTC_USD"]) if os.environ.get("CVM_BTC_USD") else None)
+    ap.add_argument("--start-timeout", type=float, default=float(
+        os.environ.get("NOSMS_RAIL_START_TIMEOUT", START_TIMEOUT_SECONDS)),
+        help="seconds to wait for the rail's link before serving anyway")
     args = ap.parse_args()
     if args.announce_only:
         args.announce = True
@@ -167,6 +227,18 @@ async def main() -> int:
     owners = {p.strip().lower() for p in
               os.environ.get("CVM_OWNER_PUBKEYS", "").split(",") if p.strip()}
     transport = build_transport(args.transport)
+    # build_transport is a pure factory — it opens nothing. The rail is brought
+    # up HERE, by the process that will serve from it, and closed on every exit
+    # path (see started_transport). Never starting it was the live bug: the JMP
+    # link stayed unconnected, so `available` was False for the whole process
+    # and `sms.send` refused `rail_not_configured` before the payment gate — on
+    # every call, while every free tool answered normally.
+    with started_transport(transport, timeout=args.start_timeout):
+        return await _serve(args, keys, npub, owners, transport)
+
+
+async def _serve(args, keys, npub, owners, transport) -> int:
+    """Announce, then serve tools until interrupted. The rail is already up."""
     contract = ContractContext(npub=npub, relays=tuple(args.relays),
                                contract_url=args.contract_url)
     # The JMP capability (jmp.status / jmp.funding / jmp.credentials). It reads

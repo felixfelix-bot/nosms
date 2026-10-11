@@ -61,7 +61,7 @@ from .pricing import (
     quote_sats,
 )
 from .refunds import refund_all
-from .transports.base import Transport
+from .transports.base import Transport, rail_refusal_reason
 
 # `ToolError` is defined in app/cvm.py and re-exported here: the JMP tool surface
 # (app/jmp_tools.py) raises the same type, so the dispatch below has exactly one
@@ -276,6 +276,30 @@ class CvmTools:
 
     # --- paid tool --------------------------------------------------------
 
+    def _rail_cannot_serve(self) -> ToolError:
+        """The refusal for a rail that is not available — without lying about WHY.
+
+        Two situations must never look the same to a caller, and neither may be
+        mistaken for ``payment_required`` (which would invite a payer to pay for
+        a message this service cannot send at all):
+
+        * **no rail behind the capability** (unset mint, unconfigured Telnyx) ->
+          ``rail_not_configured``
+        * **the rail exists and cannot serve right now** (its link is down or
+          still reconnecting) -> ``rail_unavailable:<reason>``, the same token
+          the send path uses, so a client handles both the same way.
+
+        Read from the rail, never invented: a rail that publishes no reason has
+        nothing to claim (see :func:`app.transports.base.rail_refusal_reason`).
+        """
+        rail_name = getattr(self.transport, "name", "unknown")
+        reason = rail_refusal_reason(self.transport)
+        if reason:
+            return ToolError("rail_unavailable", f"{RAIL_UNAVAILABLE_PREFIX}{reason}",
+                             rail=rail_name)
+        return ToolError("rail_not_configured", "The rail is not configured.",
+                         rail=rail_name)
+
     def sms_send(self, to: str, body: str, caller: str = "",
                  cashu_token: str | None = None,
                  settlement_receipt: str | None = None) -> dict:
@@ -295,7 +319,7 @@ class CvmTools:
 
         caps = self.transport.capabilities
         if not caps.available:
-            raise ToolError("rail_not_configured", "The rail is not configured.")
+            raise self._rail_cannot_serve()
 
         # A destination the rail cannot serve is refused BEFORE postage is
         # captured (the rail itself is the authority and raises with a reason

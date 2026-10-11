@@ -94,6 +94,13 @@ class TelnyxTransport:
         return Capabilities(available=usable, best_effort=False,
                             delivery_receipts=usable, countries=["*"])
 
+    def start(self, timeout: float | None = None) -> bool:
+        """No-op: the HTTP client is per send. False = not configured."""
+        return bool(self.capabilities.available)
+
+    def close(self) -> None:
+        """No-op: `start` acquired nothing."""
+
     async def send(self, dest: str, body: str, **kwargs) -> SendResult:
         if not self._configured or self._provider is None:
             return SendResult(accepted=False, rail=self.name, best_effort=False, receipt=None,

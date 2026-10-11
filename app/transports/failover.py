@@ -55,7 +55,7 @@ from __future__ import annotations
 
 import logging
 
-from .base import Capabilities, SendResult
+from .base import Capabilities, SendResult, rail_refusal_reason
 from .errors import RailPaced, RailUnavailable, UnsupportedDestination
 from .jmp_cheogram import is_rail_down
 
@@ -110,6 +110,30 @@ class FailoverTransport:
             "degraded_sends": self.degraded_count,
             "primary_down": not self.primary.capabilities.available,
         }
+
+    # --- lifecycle --------------------------------------------------------
+
+    def start(self, timeout: float | None = None) -> bool:
+        """Start both rails. The primary owns the connection; the fallback is
+        stateless, so its start is a no-op and its answer is always True."""
+        self.fallback.start(timeout=timeout)
+        return bool(self.primary.start(timeout=timeout))
+
+    def close(self) -> None:
+        """Close both. The fallback holds nothing, and closing is idempotent."""
+        self.primary.close()
+        self.fallback.close()
+
+    @property
+    def unavailable_reason(self) -> str | None:
+        """Why the stack cannot serve now: the primary's reason, else the
+        fallback's. ``None`` only when neither rail has anything to say —
+        which is the one honest case for `rail_not_configured`."""
+        for rail in (self.primary, self.fallback):
+            reason = rail_refusal_reason(rail)
+            if reason:
+                return reason
+        return None
 
     # --- sending ----------------------------------------------------------
 

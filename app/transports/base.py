@@ -78,6 +78,24 @@ class Transport(Protocol):
     @property
     def capabilities(self) -> Capabilities: ...
 
+    def start(self, timeout: float | None = None) -> bool:
+        """Bring the rail up. ``True`` = it can serve now.
+
+        The lifecycle seam, and the reason it is explicit rather than hidden in
+        a factory: a rail with a long-lived connection (JMP/Cheogram's XMPP
+        link) must be started by whoever SERVES, and
+        :func:`~app.transports.build_transport` stays a pure, instant
+        constructor. Rails with nothing to connect answer from their own
+        capability flags, so ``start()`` never invents a capability: a rail
+        that was built but not brought up reports ``available: false``.
+
+        A rail that cannot come up is NOT fatal (the free surface keeps
+        answering) but it must not be described as ready either.
+        """
+
+    def close(self) -> None:
+        """Release whatever :meth:`start` acquired. Idempotent; never raises."""
+
     def send(self, dest: str, body: str, **kwargs) -> SendResult: ...
 
 
@@ -86,6 +104,29 @@ class Pollable(Protocol):
     """A rail whose delivery status can be read back."""
 
     def status(self, receipt: str) -> TransportStatus: ...
+
+
+def rail_refusal_reason(transport) -> str | None:
+    """Why a rail cannot serve a send *right now*, or ``None`` when it can — or,
+    when it has no opinion, ``None`` meaning "this service has no rail here".
+
+    Read, never invented, and *live* where the rail can say so: a rail whose
+    unavailability is a connection window publishes ``unavailable_reason``
+    (see :class:`~app.transports.jmp_cheogram.JmpCheogramTransport`), which
+    clears itself the moment the link is back — deliberately NOT the latched
+    ``down_reason`` the degrade path branches on, because a reconnect window
+    must never latch a rail off (see :class:`~app.transports.failover.
+    FailoverTransport`).
+
+    The distinction matters at the caller's end: "the rail exists but is down"
+    is ``rail_unavailable:<reason>``; no token at all is the only honest case
+    for ``rail_not_configured``.
+    """
+    for attr in ("unavailable_reason", "down_reason"):
+        reason = getattr(transport, attr, None)
+        if reason:
+            return str(reason)
+    return None
 
 
 async def maybe_await(value):

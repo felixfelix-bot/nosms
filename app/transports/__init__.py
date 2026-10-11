@@ -32,7 +32,7 @@ from __future__ import annotations
 import os
 
 from .base import (Capabilities, Pollable, SendResult, Transport, TransportStatus,
-                   maybe_await, normalize_status)
+                   maybe_await, normalize_status, rail_refusal_reason)
 from .email_gateway import EmailGatewayTransport
 from .errors import RailPaced, RailUnavailable, UnsupportedDestination
 from .failover import FailoverTransport
@@ -45,7 +45,7 @@ from .whatsapp import (AdbWhatsAppDriver, WhatsAppConfig, WhatsAppTransport,
 
 __all__ = [
     "Capabilities", "SendResult", "Transport", "Pollable", "TransportStatus",
-    "maybe_await", "normalize_status",
+    "maybe_await", "normalize_status", "rail_refusal_reason",
     "EmailGatewayTransport", "UnsupportedDestination",
     "RailUnavailable", "RailPaced",
     "FakeTransport",

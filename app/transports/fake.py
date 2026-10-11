@@ -31,6 +31,13 @@ class FakeTransport:
         return Capabilities(available=True, best_effort=False,
                             delivery_receipts=True, countries=["*"])
 
+    def start(self, timeout: float | None = None) -> bool:
+        """No-op: a double has nothing to connect (see the Transport protocol)."""
+        return bool(self.capabilities.available)
+
+    def close(self) -> None:
+        """No-op: `start` acquired nothing."""
+
     def set_status(self, receipt: str, normalized: str, raw: str | None = None) -> None:
         norm = normalize_status(normalized)
         self.statuses[receipt] = (norm, raw if raw is not None else norm)

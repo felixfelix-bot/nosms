@@ -95,6 +95,13 @@ class EmailGatewayTransport:
         return Capabilities(available=True, best_effort=True,
                             delivery_receipts=False, countries=["US", "CA"])
 
+    def start(self, timeout: float | None = None) -> bool:
+        """No-op: SMTP is dialled per send, so there is no session to hold."""
+        return bool(self.capabilities.available)
+
+    def close(self) -> None:
+        """No-op: `start` acquired nothing."""
+
     def _gateway(self, number: str, carrier: str | None) -> str:
         carrier = carrier or self.carrier_map.get(number)
         if not carrier:

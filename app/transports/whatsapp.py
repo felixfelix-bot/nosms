@@ -513,6 +513,18 @@ class WhatsAppTransport:
         """
         return self._down_reason
 
+    def start(self, timeout: float | None = None) -> bool:
+        """No-op start: the phone is driven per send, and a probe is explicit.
+
+        `available` is config-derived and never shells out (a capability read
+        must not touch the device), so this reports that same honest flag
+        instead of waking the handset at boot.
+        """
+        return bool(self.capabilities.available)
+
+    def close(self) -> None:
+        """No-op: `start` acquired nothing (the device was never touched)."""
+
     def capability_flags(self) -> dict:
         """Serialisable form for ``/api/health`` and ``sms.capabilities``."""
         caps = self.capabilities
