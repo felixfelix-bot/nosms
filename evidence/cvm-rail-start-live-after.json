@@ -1,0 +1,136 @@
+{
+  "ok": true,
+  "server_npub": "npub1yfd2zvsq3lmz7n6ckjt77rm0a56s3d49n2xvpc0ct2tzx24c4wuqn4h6hf",
+  "client_npub": "npub1l8rh95jd20jnusgr5kapjxqyp0w9d5j4atwmcyr7dsdhm47ruces7mpq36",
+  "relays": [
+    "wss://relay.contextvm.org",
+    "wss://relay2.contextvm.org",
+    "wss://relay.primal.net"
+  ],
+  "to": "+13252388875",
+  "steps": [
+    {
+      "step": "sms.capabilities",
+      "reply_received": true,
+      "isError": false,
+      "ok": true,
+      "reason": null,
+      "payload": {
+        "rail": "jmp_cheogram",
+        "available": true,
+        "best_effort": true,
+        "delivery_receipts": false,
+        "countries": [
+          "US",
+          "CA"
+        ]
+      },
+      "note": "rail=jmp_cheogram best_effort=True delivery_receipts=False"
+    },
+    {
+      "step": "sms.pricing",
+      "reply_received": true,
+      "isError": false,
+      "ok": true,
+      "reason": null,
+      "payload": {
+        "unit": "sats",
+        "model": "flat",
+        "price": 2900,
+        "flat": true,
+        "quote_sats": 2886,
+        "btc_usd": null,
+        "formula": "ceil(MULT * rail_replacement_usd * (1e8 / btc_usd))",
+        "mult": 0.5,
+        "rail_replacement_usd": 4.99,
+        "floor_sats": 1000,
+        "countries": [
+          "US",
+          "CA"
+        ],
+        "note": "JMP's plan is unlimited including international, so the destination does not change the price.",
+        "destination": "+13252388875",
+        "destination_price": 2900
+      },
+      "note": "price=2900 quote=2886 rail_replacement_usd=4.99"
+    },
+    {
+      "step": "docs",
+      "reply_received": true,
+      "isError": false,
+      "ok": true,
+      "reason": null,
+      "payload": {},
+      "note": "7306 chars returned",
+      "contract": {
+        "chars": 7306,
+        "starts": "# nosms \u2014 SMS for agents (ContextVM)\n\n> Send SMS on behalf o",
+        "has_cap_flags": true,
+        "has_price": true
+      }
+    },
+    {
+      "step": "sms.send(unpaid)",
+      "reply_received": true,
+      "isError": true,
+      "ok": true,
+      "reason": "payment_required",
+      "payload": {
+        "reason": "payment_required",
+        "hint": "CEP-8 explicit_gating: attach a Cashu token (or a settlement receipt) \u2014 nothing is sent before payment lands.",
+        "cap": "cap:tool:sms.send:2900:sats",
+        "price_sats": 2900,
+        "pmi": "bitcoin-cashu",
+        "gating": "explicit_gating"
+      },
+      "note": "reason=payment_required cap=cap:tool:sms.send:2900:sats"
+    },
+    {
+      "step": "sms.send(paid)",
+      "reply_received": true,
+      "isError": false,
+      "ok": true,
+      "reason": null,
+      "payload": {
+        "id": "snd_18d0b982b2fa4f0d",
+        "to": "+13252388875",
+        "price_sats": 2900,
+        "rail": "jmp_cheogram",
+        "accepted": true,
+        "best_effort": true,
+        "delivery_confirmed": false,
+        "receipt": null,
+        "detail": "accepted by the JMP gateway; no delivery receipt exists",
+        "status": "unknown",
+        "refunded": false,
+        "refund_token": null,
+        "created_at": 1791752219.9257479
+      },
+      "note": "accepted=True price=2900 best_effort=True delivery_confirmed=False",
+      "token_minted_sats": 3924
+    },
+    {
+      "step": "sms.status",
+      "reply_received": true,
+      "isError": false,
+      "ok": true,
+      "reason": null,
+      "payload": {
+        "id": "snd_18d0b982b2fa4f0d",
+        "to": "+13252388875",
+        "price_sats": 2900,
+        "rail": "jmp_cheogram",
+        "accepted": true,
+        "best_effort": true,
+        "delivery_confirmed": false,
+        "receipt": null,
+        "detail": "accepted by the JMP gateway; no delivery receipt exists",
+        "status": "unknown",
+        "refunded": false,
+        "refund_token": null,
+        "created_at": 1791752219.9257479
+      },
+      "note": "status=unknown"
+    }
+  ]
+}

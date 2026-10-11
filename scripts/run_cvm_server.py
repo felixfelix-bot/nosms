@@ -209,8 +209,7 @@ async def main() -> int:
     if args.announce_only:
         args.announce = True
 
-    from nostr_sdk import (ClientBuilder, EventBuilder, Filter, HandleNotification,
-                           Keys, Kind, NostrSigner, RelayUrl, Tag)
+    from nostr_sdk import Keys
 
     key_file = pathlib.Path(args.key_file)
     if os.environ.get("CVM_NSEC"):
@@ -239,6 +238,9 @@ async def main() -> int:
 
 async def _serve(args, keys, npub, owners, transport) -> int:
     """Announce, then serve tools until interrupted. The rail is already up."""
+    from nostr_sdk import (ClientBuilder, EventBuilder, Filter, HandleNotification,
+                           Kind, NostrSigner, RelayUrl, Tag)
+
     contract = ContractContext(npub=npub, relays=tuple(args.relays),
                                contract_url=args.contract_url)
     # The JMP capability (jmp.status / jmp.funding / jmp.credentials). It reads
