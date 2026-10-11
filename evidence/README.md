@@ -8,9 +8,25 @@ a claim on trust.
 | `jmp-cvm-probe.json` | `python3 scripts/jmp_cvm_probe.py --out evidence/jmp-cvm-probe.json` | what the served JMP tools answer today: `jmp.status` returning the capture with `source: cached`, `jmp.funding` refusing with `rail_unavailable` (no live driver wired), and `jmp.credentials` refusing with `owner_only` plus the store precondition report (`store: openbao`, `present: false`) — the documented OpenBao blocker, from a real run. |
 | `cold-send-20261005T002427Z.json` | `scripts/jmp_cold_send_probe.py` | the exact outbound JMP/Cheogram stanza plus the response window; the destination is redacted by construction — details in the rail section below. |
 | `adapter-smoke-stdout.jsonl` | `scripts/jmp_rail_smoke.py` | the adapter's own long-lived link, run the way the service builds it — details below. |
+| `cvm-rail-start-before.json` | `python3 scripts/cvm_rail_start_probe.py --mode before` **on master** | the bug, offline and deterministic: the rail is built and never started, so `available: false` and `sms.send` refuses `rail_not_configured`. |
+| `cvm-rail-start-after.json` | `python3 scripts/cvm_rail_start_probe.py --mode after` | the fix: start() brings the link up, `available: true`, and the unpaid send reaches the payment gate (`payment_required`). |
+| `cvm-rail-start-rail-down.json` | `python3 scripts/cvm_rail_start_probe.py --mode down` | the honest rail-down answer: `available: false` and `sms.send` -> `rail_unavailable:not_connected` — never confused with "not configured". |
+| `cvm-rail-start-rail-down.log` | same, stderr | the loud line the runner logs instead of failing silently. |
+| `cvm-rail-start-red-on-master.txt` | `python3 -m pytest tests/test_cvm_rail_start.py` **on master** | RED first, observed: 9 failed / 1 passed, `AttributeError: ... has no attribute 'start'`. |
+| `cvm-rail-start-live-before.json` (+ `-server.log`) | `scripts/cvm_live_verify.py --no-pay` against the **master** server | the card's live bug reproduced on this box and this npub: `available: false`, `reason=rail_not_configured`. |
+| `cvm-rail-start-live-after.json` / `-nopay.json` (+ `-server.log`) | `scripts/cvm_live_verify.py` against **this branch's** server | live after: announcements 3/3 relays, `available: true`, unpaid -> `payment_required`, **paid -> accepted=True price=2900**, `sms.status` answered. |
+| `cvm-rail-start-live-after.md` | written by hand | the before/after table and the exact commands for the two live runs. |
 
-Nothing in this directory is hand-written: re-run the commands above and the files
-should be byte-identical apart from the timestamps the tool returns.
+## Task t_f2a6f901 — the rail must be *started* before it serves (2026-10-11)
+
+`README.md` and `cvm-rail-start-live-after.md` are the only hand-written files
+here (prose); every `.json`/`.log`/`.txt` above is machine output from the
+commands in its row, and every destination in them is masked by the harness's own
+mask() (country digit + last four), so no un-masked E.164 is committed.
+
+Apart from the two hand-written prose files named in the task section below,
+nothing in this directory is hand-written: re-run the commands above and the
+files should be byte-identical apart from the timestamps the tool returns.
 
 ---
 

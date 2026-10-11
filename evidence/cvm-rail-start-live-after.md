@@ -3,6 +3,12 @@
 Box: cobrador (Linux), 2026-10-11 ~22:0x UTC. Same server identity as the card's
 original failing run (`npub1yfd2zvsq3lmz7n6ckjt77rm0a56s3d49n2xvpc0ct2tzx24c4wuqn4h6hf`).
 
+Both legs were run under my own control on this box, with one harness:
+
+- **before** = the server from `master` (142b0d5), in the throwaway worktree
+  `/home/c03rad0r/worktrees/t_cvm_rail_start-RED`
+- **after** = the server from this branch, in the task worktree
+
 ## Commands
 
     # server (branch pr/cvm-rail-start, worktree .worktrees/t_cvm_rail_start)
@@ -18,7 +24,7 @@ original failing run (`npub1yfd2zvsq3lmz7n6ckjt77rm0a56s3d49n2xvpc0ct2tzx24c4wuq
 
 ## Observed
 
-| step | before (card, 2026-10-11) | after (this run) |
+| step | before (this box, card's bug) | after (this run) |
 |---|---|---|
 | announcements 11316/11317/11318 | published OK | published OK, 3/3 relays, 0 failed |
 | `sms.capabilities` | `available: false` | **`available: true`** |
@@ -27,6 +33,10 @@ original failing run (`npub1yfd2zvsq3lmz7n6ckjt77rm0a56s3d49n2xvpc0ct2tzx24c4wuq
 | `sms.status` | n/a | answered (`status=unknown`) |
 
 Artifacts:
+
+- `cvm-rail-start-live-before.json` — the master server, whole report
+  (`available: false`, `rail_not_configured`), with
+  `cvm-rail-start-live-before-server.log` beside it.
 
 - `cvm-rail-start-live-after-nopay.json` — the `--no-pay` leg, whole report.
 - `cvm-rail-start-live-after.json` — the paid leg, all six steps (an unpaid
