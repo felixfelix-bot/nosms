@@ -114,14 +114,32 @@ class FailoverTransport:
     # --- lifecycle --------------------------------------------------------
 
     def start(self, timeout: float | None = None) -> bool:
-        """Start both rails. The primary owns the connection; the fallback is
-        stateless, so its start is a no-op and its answer is always True."""
-        primary_ok = bool(self.primary.start(timeout=timeout))
-        fallback_ok = bool(self.fallback.start(timeout=timeout))
+        """Start both rails. A rail that RAISES is as non-fatal as one that
+        answers no -- the same rule this module applies to a raising *send*, and
+        the reason a rail whose outage is loud (WhatsApp raises on a ban) can be
+        wrapped here at all.
+
+        Both rails are always attempted: a primary that will not start must not
+        skip the fallback start, which is the entire point of the stack. The
+        primary owns the connection; the fallback is stateless (SMTP is dialled
+        per send) and reports its own availability.
+        """
+        primary_ok = self._start_rail(self.primary, timeout)
+        fallback_ok = self._start_rail(self.fallback, timeout)
         # `or`: a stack whose primary is down but whose fallback can serve IS
         # ready -- that is exactly what `capabilities` already reports, and
         # answering false here printed a spurious RAIL DOWN for a working stack.
         return primary_ok or fallback_ok
+
+    @staticmethod
+    def _start_rail(rail, timeout: float | None) -> bool:
+        """``rail.start()`` as a plain bool: an exception means "not ready"."""
+        try:
+            return bool(rail.start(timeout=timeout))
+        except Exception:                    # base.py:92: rail trouble is not fatal
+            logger.warning("nosms failover: %s start raised", rail.name,
+                           exc_info=True)
+            return False
 
     def close(self) -> None:
         """Close both. The fallback holds nothing, and closing is idempotent."""

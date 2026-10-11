@@ -352,3 +352,53 @@ def test_the_degrade_stack_closes_the_fallback_even_if_the_primary_raises():
 
     stack.close()                                  # must not raise
     assert primary_link.closed
+
+
+# --- review round 2 (delta re-review of the round-1 fix) ----------------------
+#
+# The round-1 fix for `FailoverTransport.start()` introduced a REGRESSION: it
+# reordered `primary.start()` ahead of `fallback.start()` without guarding
+# either call. The base code called the fallback first, so a primary that RAISED
+# still had the fallback started; after the reorder the raise skipped the
+# fallback entirely and escaped to the caller. The module's own docstring states
+# the rule this breaks: "A primary that raises must degrade exactly like one that
+# returns" (that is why the WhatsApp rail can be wrapped at all).
+
+
+class RecordingEmail(EmailGatewayTransport):
+    """The real fallback, made observable: records that its start was reached."""
+
+    def __init__(self):
+        super().__init__()
+        self.start_calls: list[float | None] = []
+
+    def start(self, timeout: float | None = None) -> bool:
+        self.start_calls.append(timeout)
+        return super().start(timeout=timeout)
+
+
+def test_the_degrade_stack_still_starts_the_fallback_when_the_primary_raises():
+    """A RAISING primary must degrade exactly like one that returns False.
+
+    Otherwise wrapping a rail whose outage is *loud* (the WhatsApp rail raises
+    ``RailUnavailable`` on a ban) turns a recoverable rail outage into an
+    unhandled exception -- and, after the round-1 reorder, silently skips the
+    fallback that was the whole point of the stack.
+    """
+    fallback = RecordingEmail()
+    stack = FailoverTransport(JmpCheogramTransport(RaisingLink()), fallback)
+
+    assert stack.start(timeout=1.0) is True        # fallback can serve
+    assert fallback.start_calls == [1.0]           # ...and it was actually started
+
+
+def test_the_degrade_stack_answers_false_when_no_rail_can_start():
+    """Both rails raising is a plain not-ready, never an escaping exception."""
+
+    class RaisingEmail(EmailGatewayTransport):
+        def start(self, timeout: float | None = None) -> bool:
+            raise RuntimeError("smtp connect blew up: timeout=" + repr(timeout))
+
+    stack = FailoverTransport(JmpCheogramTransport(RaisingLink()), RaisingEmail())
+
+    assert stack.start(timeout=1.0) is False
