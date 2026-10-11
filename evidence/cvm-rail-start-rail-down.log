@@ -1,0 +1,2 @@
+# stderr of: scripts/cvm_rail_start_probe.py --mode down   (the loud log line the operator sees)
+[nosms-cvm] RAIL DOWN (not_connected): jmp_cheogram cannot serve sms.send; the free tools stay up and sms.capabilities.available is false

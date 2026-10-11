@@ -1,0 +1,19 @@
+{
+  "mode": "down",
+  "started": false,
+  "sms.capabilities": {
+    "rail": "jmp_cheogram",
+    "available": false,
+    "best_effort": true,
+    "delivery_receipts": false,
+    "countries": [
+      "US",
+      "CA"
+    ]
+  },
+  "sms.send": {
+    "reason": "rail_unavailable",
+    "hint": "rail_unavailable:not_connected",
+    "rail": "jmp_cheogram"
+  }
+}

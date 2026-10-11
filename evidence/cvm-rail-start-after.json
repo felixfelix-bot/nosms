@@ -1,0 +1,22 @@
+{
+  "mode": "after",
+  "started": true,
+  "sms.capabilities": {
+    "rail": "jmp_cheogram",
+    "available": true,
+    "best_effort": true,
+    "delivery_receipts": false,
+    "countries": [
+      "US",
+      "CA"
+    ]
+  },
+  "sms.send": {
+    "reason": "payment_required",
+    "hint": "CEP-8 explicit_gating: attach a Cashu token (or a settlement receipt) \u2014 nothing is sent before payment lands.",
+    "cap": "cap:tool:sms.send:2900:sats",
+    "price_sats": 2900,
+    "pmi": "bitcoin-cashu",
+    "gating": "explicit_gating"
+  }
+}

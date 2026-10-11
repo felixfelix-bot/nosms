@@ -1,0 +1,34 @@
+# RED on master (142b0d5) BEFORE the fix — observed 2026-10-11
+# command: python3.13 -m pytest tests/test_cvm_rail_start.py -p no:cacheprovider --no-cov -q
+# worktree: /home/c03rad0r/worktrees/t_cvm_rail_start-RED (detached at master 142b0d5)
+
+    @pytest.mark.parametrize("rail", [FakeTransport(), EmailGatewayTransport()])
+    def test_stateless_rails_implement_the_lifecycle_as_a_no_op(rail):
+        assert isinstance(rail, Transport)            # the protocol carries start/close
+>       assert rail.start(timeout=0.01) is True       # nothing to connect
+               ^^^^^^^^^^
+E       AttributeError: 'EmailGatewayTransport' object has no attribute 'start'
+
+tests/test_cvm_rail_start.py:220: AttributeError
+_____________ test_the_degrade_stack_starts_and_closes_its_primary _____________
+
+    def test_the_degrade_stack_starts_and_closes_its_primary():
+        link = StubLink()
+        stack = FailoverTransport(JmpCheogramTransport(link), EmailGatewayTransport())
+        assert isinstance(stack, Transport)
+    
+>       assert stack.start(timeout=1.0) is True
+               ^^^^^^^^^^^
+E       AttributeError: 'FailoverTransport' object has no attribute 'start'
+
+tests/test_cvm_rail_start.py:229: AttributeError
+=========================== short test summary info ============================
+FAILED tests/test_cvm_rail_start.py::test_the_servers_start_path_brings_the_link_up
+FAILED tests/test_cvm_rail_start.py::test_the_lifecycle_closes_the_rail_on_the_way_out
+FAILED tests/test_cvm_rail_start.py::test_a_started_rail_makes_an_unpaid_send_reach_the_payment_gate
+FAILED tests/test_cvm_rail_start.py::test_a_link_that_never_connects_is_rail_unavailable_not_unconfigured
+FAILED tests/test_cvm_rail_start.py::test_a_terminal_refusal_carries_the_links_own_reason
+FAILED tests/test_cvm_rail_start.py::test_not_connected_is_live_and_clears_when_the_link_comes_back
+FAILED tests/test_cvm_rail_start.py::test_stateless_rails_implement_the_lifecycle_as_a_no_op[rail0]
+FAILED tests/test_cvm_rail_start.py::test_stateless_rails_implement_the_lifecycle_as_a_no_op[rail1]
+FAILED tests/test_cvm_rail_start.py::test_the_degrade_stack_starts_and_closes_its_primary

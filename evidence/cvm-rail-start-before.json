@@ -1,0 +1,18 @@
+{
+  "mode": "before",
+  "started": null,
+  "sms.capabilities": {
+    "rail": "jmp_cheogram",
+    "available": false,
+    "best_effort": true,
+    "delivery_receipts": false,
+    "countries": [
+      "US",
+      "CA"
+    ]
+  },
+  "sms.send": {
+    "reason": "rail_not_configured",
+    "hint": "The rail is not configured."
+  }
+}
