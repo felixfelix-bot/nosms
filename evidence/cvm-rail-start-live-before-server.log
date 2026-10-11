@@ -1,0 +1,16 @@
+[nosms-cvm] server npub npub1yfd2zvsq3lmz7n6ckjt77rm0a56s3d49n2xvpc0ct2tzx24c4wuqn4h6hf
+[nosms-cvm] transport   jmp_cheogram (best_effort=True, delivery_receipts=False)
+[nosms-cvm] relays      wss://relay.contextvm.org, wss://relay2.contextvm.org, wss://relay.primal.net
+[nosms-cvm] price       2900 sats flat (quote 2886)
+[nosms-cvm] announcement kind 11316: SendEventOutput(id=EventId { inner: EventId(8d1a51d2111461e95f44ba811fa21025050b1eb5552eed93033ab734fcedbfdc) }, success=[RelayUrl { inner: RelayUrl("wss://relay.primal.net") }, RelayUrl { inner: RelayUrl("wss://relay2.contextvm.org") }, RelayUrl { inner: RelayUrl("wss://relay.contextvm.org") }], failed={})
+[nosms-cvm] announcement kind 11317: SendEventOutput(id=EventId { inner: EventId(cd7cc02fa6fb2a42263b4cefea585516bf8180d6bd6e572ef173bf0b31ecb7c6) }, success=[RelayUrl { inner: RelayUrl("wss://relay.contextvm.org") }, RelayUrl { inner: RelayUrl("wss://relay.primal.net") }, RelayUrl { inner: RelayUrl("wss://relay2.contextvm.org") }], failed={})
+[nosms-cvm] announcement kind 11318: SendEventOutput(id=EventId { inner: EventId(b5307dd417aca5ebdbdff67f204e3e37c6425b01a2dd38622be1a1f6680c34d4) }, success=[RelayUrl { inner: RelayUrl("wss://relay2.contextvm.org") }, RelayUrl { inner: RelayUrl("wss://relay.primal.net") }, RelayUrl { inner: RelayUrl("wss://relay.contextvm.org") }], failed={})
+[nosms-cvm] listening (broad kind 1059/21059, p-tag filtered client-side)
+[nosms-cvm] tools/call id=cap1 from=c5a86e738f50
+[nosms-cvm] replied -> SendEventOutput(id=EventId { inner: EventId(e56fdb5914be9ca595216048d28419bafe1eba025f840c69142f89a2f3b474bb) }, success=[RelayUrl { inner: RelayUrl("wss://relay.primal.net") }], failed={RelayUrl { inner: RelayUrl("wss://relay.contextvm.org") }: 'invalid: event expired', RelayUrl { inner: RelayUrl("wss://relay2.contextvm.org") }: 'invalid: event expired'})
+[nosms-cvm] tools/call id=price1 from=c5a86e738f50
+[nosms-cvm] replied -> SendEventOutput(id=EventId { inner: EventId(bf4664fb82336aead54e0b753a759b53a43787af8f860dbe9cabf56c4b85f9ee) }, success=[RelayUrl { inner: RelayUrl("wss://relay.primal.net") }], failed={RelayUrl { inner: RelayUrl("wss://relay2.contextvm.org") }: 'invalid: event expired', RelayUrl { inner: RelayUrl("wss://relay.contextvm.org") }: 'invalid: event expired'})
+[nosms-cvm] tools/call id=docs1 from=c5a86e738f50
+[nosms-cvm] replied -> SendEventOutput(id=EventId { inner: EventId(3185b6fc8ce1d872ffed822f9884cc073bc5c66b828f4b8c96f6657c690b8995) }, success=[RelayUrl { inner: RelayUrl("wss://relay.primal.net") }, RelayUrl { inner: RelayUrl("wss://relay2.contextvm.org") }, RelayUrl { inner: RelayUrl("wss://relay.contextvm.org") }], failed={})
+[nosms-cvm] tools/call id=unpaid1 from=c5a86e738f50
+[nosms-cvm] replied -> SendEventOutput(id=EventId { inner: EventId(e8862f4e32e650c744024a7625c99f8cb1802da10def4ef8a9159808336930e7) }, success=[RelayUrl { inner: RelayUrl("wss://relay.contextvm.org") }, RelayUrl { inner: RelayUrl("wss://relay2.contextvm.org") }, RelayUrl { inner: RelayUrl("wss://relay.primal.net") }], failed={}) isError

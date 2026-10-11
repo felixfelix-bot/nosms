@@ -1,0 +1,90 @@
+{
+  "ok": true,
+  "server_npub": "npub1yfd2zvsq3lmz7n6ckjt77rm0a56s3d49n2xvpc0ct2tzx24c4wuqn4h6hf",
+  "client_npub": "npub1ck5xuuu02pdgc6dw8d4z3au0l3mdfhc0xv2hsfvhnwfuwqh52tsq0cdqgr",
+  "relays": [
+    "wss://relay.contextvm.org",
+    "wss://relay2.contextvm.org",
+    "wss://relay.primal.net"
+  ],
+  "to": "+15555550100",
+  "steps": [
+    {
+      "step": "sms.capabilities",
+      "reply_received": true,
+      "isError": false,
+      "ok": true,
+      "reason": null,
+      "payload": {
+        "rail": "jmp_cheogram",
+        "available": false,
+        "best_effort": true,
+        "delivery_receipts": false,
+        "countries": [
+          "US",
+          "CA"
+        ]
+      },
+      "note": "rail=jmp_cheogram best_effort=True delivery_receipts=False"
+    },
+    {
+      "step": "sms.pricing",
+      "reply_received": true,
+      "isError": false,
+      "ok": true,
+      "reason": null,
+      "payload": {
+        "unit": "sats",
+        "model": "flat",
+        "price": 2900,
+        "flat": true,
+        "quote_sats": 2886,
+        "btc_usd": null,
+        "formula": "ceil(MULT * rail_replacement_usd * (1e8 / btc_usd))",
+        "mult": 0.5,
+        "rail_replacement_usd": 4.99,
+        "floor_sats": 1000,
+        "countries": [
+          "US",
+          "CA"
+        ],
+        "note": "JMP's plan is unlimited including international, so the destination does not change the price.",
+        "destination": "+15555550100",
+        "destination_price": 2900
+      },
+      "note": "price=2900 quote=2886 rail_replacement_usd=4.99"
+    },
+    {
+      "step": "docs",
+      "reply_received": true,
+      "isError": false,
+      "ok": true,
+      "reason": null,
+      "payload": {},
+      "note": "7306 chars returned",
+      "contract": {
+        "chars": 7306,
+        "starts": "# nosms \u2014 SMS for agents (ContextVM)\n\n> Send SMS on behalf o",
+        "has_cap_flags": true,
+        "has_price": true
+      }
+    },
+    {
+      "step": "sms.send(unpaid)",
+      "reply_received": true,
+      "isError": true,
+      "ok": true,
+      "reason": "rail_not_configured",
+      "payload": {
+        "reason": "rail_not_configured",
+        "hint": "The rail is not configured."
+      },
+      "note": "reason=rail_not_configured cap=None"
+    },
+    {
+      "step": "sms.send(paid)",
+      "skipped": true,
+      "note": "--no-pay requested"
+    }
+  ]
+}
