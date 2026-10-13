@@ -1,5 +1,26 @@
 # PROGRESS — SMS CVM end-to-end + public mint (2026-10-12)
 
+## 2026-10-13 — task t_689e2d7c: refund sweep F1/F2 (branch worker-base/t_689e2d7c)
+
+- F1 (postage locked forever): `sweep_refunds` counted a `status="failed"` row
+  with no receipt as `unobservable` and skipped it on every sweep → refund
+  predicate rewritten; the recorded failed verdict refunds first, no receipt
+  needed. RED→GREEN in tests/test_refund.py.
+- F2 (refund on unproven non-delivery): an `unknown` poll fell into
+  `refund_all` → new `unclassifiable` bucket; the poll is persisted (with a
+  delivered-verdict guard) but pays out nothing. RED→GREEN, plus script-level
+  pins in tests/test_sweep_script.py.
+- Handler honesty: `refund_all()` was fire-and-forget (return discarded,
+  exceptions uncaught → 500 + phantom "refunded: true") → `_refund_quietly` in
+  app/main.py; all 4 failure paths report what actually happened. New file
+  tests/test_send_refund_honesty.py.
+- Discovery: 3 script tests passed only via the F2 bug (the script's fresh
+  FakeTransport answers `unknown`; the old sweep refunded on it). Re-seeded
+  honestly via a patched stateless-rail seam (`_patch_rail`).
+- Suite: 825 passed; 2 pre-existing failures in test_jmp_xmpp_client.py
+  (master reproduces them with the fix stashed — slixmpp env issue, untouched
+  by this diff). Coverage 82.25% ≥ 80%. gitleaks clean.
+
 ## DONE and PUSHED
 
 ### nosms (felixfelix-bot/nosms, master)
