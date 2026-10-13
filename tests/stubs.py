@@ -13,7 +13,6 @@ used to pin the decoder against a token this repo did not produce.
 from __future__ import annotations
 
 import secrets as _secrets
-from math import ceil
 
 from app.cashu import CashuError, encode_token
 from app.main import create_app
@@ -37,15 +36,33 @@ def make_token(amounts, mint: str = MINT_URL, keyset: str = KEYSET) -> str:
     return encode_token(mint, [proof(a, keyset=keyset) for a in amounts], unit="sat")
 
 
+#: a second, older keyset — a token assembled across a keyset upgrade (or a
+#: hand-built v3 token) can carry proofs from BOTH, with different input fees.
+#: Derived from KEYSET rather than written out: a fresh 64-hex literal in the
+#: source trips gitleaks' generic-api-key rule, and the value only needs to
+#: be a distinct, structurally valid id — not a real keyset.
+KEYSET_OLD = "00" + KEYSET[2:]
+
+
+def make_mixed_token(entries, mint: str = MINT_URL) -> str:
+    """A v3 token spanning several keysets: [(keyset, [amounts]), ...]."""
+    proofs = [proof(a, keyset=ks) for ks, amounts in entries for a in amounts]
+    return encode_token(mint, proofs, unit="sat")
+
+
 class StubMint:
     """Deterministic offline stand-in for ``app.cashu.MintClient``."""
 
     def __init__(self, mint_url: str = MINT_URL, fee_ppk: int = 0, keyset: str = KEYSET,
-                 max_denomination: int | None = None):
+                 max_denomination: int | None = None, fee_ppk_by_keyset=None):
         self.mint_url = mint_url
         self.fee_ppk = int(fee_ppk)
         self.keyset = keyset
         self.max_denomination = max_denomination
+        # Per-keyset input fees, exactly like a real mint: a rotated keyset
+        # carries its own input_fee_ppk, so a token spanning both is charged
+        # with each keyset's rate for that keyset's proofs.
+        self._fee_ppk_by_keyset = dict(fee_ppk_by_keyset or {})
         self.spent: set[str] = set()
         self.swap_calls: list[dict] = []
         self.fail_swap: str | None = None
@@ -71,11 +88,18 @@ class StubMint:
         return {a: "02" + _secrets.token_hex(32) for a in amounts}
 
     def fee_ppk_for(self, keyset_id: str) -> int:
-        return self.fee_ppk
+        return self._fee_ppk_by_keyset.get(str(keyset_id), self.fee_ppk)
 
     def fee_for(self, proofs) -> int:
-        """NUT-02: ceil(input_fee_ppk * n_inputs / 1000) sats."""
-        return ceil(self.fee_ppk * len(proofs) / 1000)
+        """NUT-02 the way the mints actually charge it (cdk-mintd, nutshell).
+
+        The raw fee is summed per proof from that proof's keyset rate, then a
+        SINGLE ceil is applied to the total — not a ceil per keyset. Verified
+        against cdk ``calculate_fee`` and nutshell ``get_fees_for_proofs``:
+        both compute ``(sum(ppk_i * n_i) + 999) // 1000``.
+        """
+        raw = sum(self.fee_ppk_for(p["id"]) for p in proofs)
+        return (raw + 999) // 1000
 
     def check_states(self, proofs) -> list[str]:
         return ["SPENT" if p["secret"] in self.spent else "UNSPENT" for p in proofs]

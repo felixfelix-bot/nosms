@@ -29,7 +29,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.cashu import MintClient, decode_token, fee_for, split_amounts  # noqa: E402
+from app.cashu import (MintClient, decode_token, input_fee_for,  # noqa: E402
+                      split_amounts)
 
 HERE = pathlib.Path(__file__).resolve().parent.parent
 DEFAULT_OUT = HERE / "tests" / "fixtures" / "v4_token_cbor.b64"
@@ -39,7 +40,11 @@ def burn(client: MintClient, proofs: list[dict]) -> dict:
     """Spend the proofs into the void: swap, then discard the new blinding."""
     states = client.check_states(proofs)
     total = sum(p["amount"] for p in proofs)
-    fee = fee_for(client.fee_ppk_for(proofs[0]["id"]), len(proofs))
+    # NUT-02 input_fee_ppk is per keyset — price each keyset's proofs with
+    # its own rate, the way the mint's swap balance check does (F3).
+    ppks = {str(ks): int(client.fee_ppk_for(ks))
+            for ks in {str(p["id"]) for p in proofs}}
+    fee = input_fee_for(ppks, proofs)
     if all(s == "SPENT" for s in states):
         return {"burned_sats": 0, "burn_fee_sats": 0, "states": states,
                 "note": "already spent at the mint; nothing left to burn"}

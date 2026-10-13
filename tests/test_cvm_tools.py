@@ -142,6 +142,25 @@ def test_mint_input_fee_is_borne_by_the_sender():
     assert t.escrow.get(payload(r2)["id"]).amount == PRICE
 
 
+def test_a_mixed_keyset_token_pays_each_keysets_fee_not_proofs0():
+    """F3: the CVM path must price a mixed-keyset token with both keysets'
+    rates too — same defect as the HTTP send handler, same fix."""
+    from tests.stubs import KEYSET, KEYSET_OLD, make_mixed_token
+
+    mint = StubMint(fee_ppk_by_keyset={KEYSET: 100, KEYSET_OLD: 4000})
+    t = tools(mint=mint)
+    token = make_mixed_token([(KEYSET, [2048, 1024]), (KEYSET_OLD, [64])])
+    result = t.call("sms.send", {"to": "+155****0100", "body": "hi",
+                                 "cashu_token": token})
+    assert "isError" not in result, payload(result)
+    body = payload(result)
+    assert body["accepted"] is True
+    # (200 + 4000 + 999) // 1000 = 5 sats — one ceil over the summed raw fees
+    assert len(mint.swap_calls) == 1
+    assert sum(mint.swap_calls[0]["outputs"]) == 3136 - 5
+    assert t.escrow.get(body["id"]).amount == PRICE
+
+
 def test_token_from_another_mint_is_refused_before_any_swap():
     mint = StubMint(fee_ppk=0)
     t = tools(mint=mint)

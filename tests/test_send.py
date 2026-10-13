@@ -15,7 +15,8 @@ from app.cashu import decode_token
 from app.pricing import DEFAULT_PRICE_SATS, normalize_e164
 from app.transports import FakeTransport
 from tests.conftest import BASE_URL, build_event, nip98_header
-from tests.stubs import MINT_URL, StubMint, make_app, make_token, proof
+from tests.stubs import (KEYSET, KEYSET_OLD, MINT_URL, StubMint, make_app,  # noqa: F401
+                         make_mixed_token, make_token, proof)
 
 SEND_URL = f"{BASE_URL}/api/send"
 # ADR-0002 pricing is FLAT: the rail's plan is unlimited including international,
@@ -178,6 +179,47 @@ def test_mint_input_fee_is_borne_by_the_sender_not_the_service(tmp_path):
     assert r2.json()["price_sats"] == PRICE
     assert r2.json()["mint_fee_sats"] == 1
     assert r2.json()["change_sats"] == 171
+
+
+def test_a_token_spanning_two_keysets_is_priced_with_each_keysets_fee(tmp_path):
+    """F3 (glm-5.2 review): input_fee_ppk is PER KEYSET, so a token carrying
+    proofs from two keysets must be priced with each keyset's rate for its own
+    proofs. Pricing from proofs[0] alone mis-sizes the swap, and the mint
+    (which enforces the NUT-02 balance inputs = outputs + fee) rejects it as
+    a spurious 502 mint_error.
+
+    The mints charge ONE ceil over the summed raw fees — cdk ``calculate_fee``
+    and nutshell ``get_fees_for_proofs`` both compute
+    (sum(ppk_i * n_i) + 999) // 1000 — so 2 proofs at 100 ppk + 1 proof at
+    4000 ppk costs ceil(4200 / 1000) = 5 sats.
+    """
+    mint = StubMint(fee_ppk_by_keyset={KEYSET: 100, KEYSET_OLD: 4000})
+    transport = FakeTransport()
+    client = TestClient(make_app(tmp_path, transport=transport, mint=mint))
+    token = make_mixed_token([(KEYSET, [2048, 1024]), (KEYSET_OLD, [64])])
+    # 3136 sats in, fee ceil(4200/1000) = 5 -> net 3131, change 231
+    r = send(client, token=token)
+    assert r.status_code == 200, r.text
+    assert r.json()["mint_fee_sats"] == 5
+    assert r.json()["change_sats"] == 3136 - 5 - PRICE
+    assert transport.sent, "the mixed-keyset payer must be served, not 502'd"
+
+
+def test_a_mixed_keyset_token_short_after_the_real_fee_is_refused_not_502(tmp_path):
+    """The other face of F3: a token that is short once BOTH keysets' fees are
+    counted used to sail past coverage (fee priced from proofs[0] alone) and
+    die at the swap as an opaque 502. With per-keyset pricing it is refused
+    up front with the real shortfall — an honest 402, not a spurious 502."""
+    mint = StubMint(fee_ppk_by_keyset={KEYSET: 100, KEYSET_OLD: 4000})
+    client = TestClient(make_app(tmp_path, transport=FakeTransport(), mint=mint))
+    # 2902 sats; real fee ceil((4*100 + 3*4000)/1000) = 13 -> net 2889 < price
+    token = make_mixed_token([(KEYSET, [2048, 512, 256, 64]),
+                              (KEYSET_OLD, [16, 4, 2])])
+    r = send(client, token=token)
+    assert r.status_code == 402
+    assert r.headers["x-reason"] == "insufficient_funds"
+    assert r.json()["mint_fee_sats"] == 13
+    assert r.json()["shortfall_sats"] == PRICE - (2902 - 13)
 
 
 def test_mint_failure_is_502_and_creates_no_message(tmp_path):

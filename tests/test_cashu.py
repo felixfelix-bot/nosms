@@ -20,6 +20,7 @@ from app.cashu import (
     encode_token,
     fee_for,
     hash_to_curve,
+    input_fee_for,
     split_amounts,
     unblind,
 )
@@ -144,6 +145,43 @@ def test_split_amounts_is_a_power_of_two_decomposition(total, expected):
 @pytest.mark.parametrize("ppk,n,expected", [(0, 3, 0), (100, 3, 1), (100, 10, 1), (100, 11, 2)])
 def test_fee_for_is_the_nut02_input_fee(ppk, n, expected):
     assert fee_for(ppk, n) == expected
+
+
+# --- per-keyset input fees (finding F3) ---------------------------------------
+#
+# input_fee_ppk is per KEYSET, and a token can span several. The fee both
+# reference mints charge is ONE ceil over the summed raw per-keyset fees —
+# cdk ``calculate_fee`` and nutshell ``get_fees_for_proofs`` both compute
+# (sum(ppk_i * n_i) + 999) // 1000 — not a ceil per keyset.
+
+MIXED_PPKS = {"ks-a": 100, "ks-b": 4000}
+
+
+def _proofs(specs):
+    return [{"id": ks, "amount": 1} for ks, n in specs for _ in range(n)]
+
+
+@pytest.mark.parametrize("specs,expected", [
+    ([("ks-a", 3)], 1),                                       # single keyset
+    ([("ks-a", 2), ("ks-b", 1)], 5),                          # ceil(4200/1000)
+    ([("ks-a", 2), ("ks-a", 3)], 1),                          # ONE ceil, not two
+    ([("ks-a", 2), ("ks-b", 0)], 1),                          # empty group
+    ([("ks-b", 1)], 4),
+])
+def test_input_fee_for_prices_each_keyset_like_the_mints(specs, expected):
+    assert input_fee_for(MIXED_PPKS, _proofs(specs)) == expected
+
+
+def test_input_fee_for_charges_zero_for_an_unknown_keyset():
+    """A keyset the map does not know is priced 0 — the caller passed the
+    mint's own published rates, so an unknown keyset there means the mint
+    publishes no fee for it (the old code priced it from proofs[0] anyway)."""
+    assert input_fee_for({}, _proofs([("ks-a", 5)])) == 0
+
+
+def test_input_fee_for_reduces_to_fee_for_for_a_single_keyset():
+    ppk, n = 100, 11
+    assert input_fee_for({"ks": ppk}, _proofs([("ks", n)])) == fee_for(ppk, n)
 
 
 def test_default_fee_constant_matches_testnut():

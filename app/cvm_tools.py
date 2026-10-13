@@ -33,7 +33,7 @@ from .cashu import (
     CashuError,
     decode_token,
     encode_token,
-    fee_for,
+    input_fee_for,
     split_amounts,
 )
 from .settlements import SettlementStore
@@ -250,10 +250,13 @@ class CvmTools:
             raise ToolError("token_state_unknown", "The mint reports a non-final proof state.")
 
         try:
-            ppk = int(self.mint.fee_ppk_for(token_obj.proofs[0]["id"]))
+            # NUT-02 input_fee_ppk is per keyset; a mixed-keyset token must
+            # be priced with each keyset's rate for its own proofs (F3).
+            ppks = {str(ks): int(self.mint.fee_ppk_for(ks))
+                    for ks in {str(p["id"]) for p in token_obj.proofs}}
         except Exception:                                        # noqa: BLE001
-            ppk = 0
-        mint_fee = fee_for(ppk, len(token_obj.proofs))
+            ppks = {}
+        mint_fee = input_fee_for(ppks, token_obj.proofs)
         net = token_obj.amount - mint_fee
         if net < price:
             raise ToolError(
