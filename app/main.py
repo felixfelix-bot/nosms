@@ -37,6 +37,13 @@ from .transports import (EmailGatewayTransport, FakeTransport, TelnyxTransport,
 from .transports.errors import RailPaced, RailUnavailable
 from .transports.whatsapp import DEFAULT_HALT_STATE as WHATSAPP_HALT_STATE
 
+#: what the caller is told when the immediate refund could not be completed:
+#: honest (not "refunded"), actionable (where the sats are), and never a lie
+#: about a refund that did not happen.
+_REFUND_LATER_HINT = ("the refund could not be completed right now; the "
+                      "sweep will refund it automatically — poll "
+                      f"/api/refund for the token.")
+
 
 def build_transport(cfg: Config):
     """Map the configured rail name onto a transport instance."""
@@ -68,6 +75,23 @@ async def _json_object(request: Request) -> dict | None:
     except (ValueError, UnicodeDecodeError):
         return None
     return data if isinstance(data, dict) else None
+
+
+def _refund_quietly(escrow, rail, message_id: str, reason: str) -> bool | None:
+    """Try an immediate refund; never let it turn a send failure into a 500.
+
+    The postage IS refundable — the message never left — but the refund write
+    itself can fail transiently (a locked sqlite, a full disk, a process death
+    mid-transaction). That must not mask the send outcome: the caller still
+    gets the honest transport error, with `refunded` reflecting what actually
+    happened rather than what was intended. An unrefundable row is left
+    `failed` with no receipt — exactly the shape the T+15 min sweep now
+    refunds on its `failed_send` predicate (F1: it is never skipped forever).
+    """
+    try:
+        return bool(refund_all(escrow, rail, message_id, reason))
+    except Exception:                                        # noqa: BLE001
+        return None
 
 
 def create_app(config: Config | dict | None = None, transport=None, mint=None) -> FastAPI:
@@ -264,48 +288,56 @@ def create_app(config: Config | dict | None = None, transport=None, mint=None) -
             # is told *when* to come back instead of being charged for a failure.
             escrow.update_status(message_id, status="failed",
                                  provider_status=f"rail_paced:{exc.reason}")
-            refund_all(escrow, rail, message_id, "rail_paced")
+            refunded = _refund_quietly(escrow, rail, message_id, "rail_paced")
             return error_response(
                 429, "rail_paced",
                 f"The rail is pacing this personal line ({exc.reason}); the "
                 f"message was not attempted. Retry after {exc.retry_after} s — "
-                f"your postage was refunded.",
+                + ("your postage was refunded."
+                   if refunded else _REFUND_LATER_HINT),
                 retry_after=exc.retry_after,
                 extra={"message_id": message_id, "pacing_reason": exc.reason,
                        "retry_after_seconds": exc.retry_after,
-                       "refunded": True, "refund_sats": record.held})
+                       "refunded": bool(refunded), "refund_sats":
+                       record.held if refunded else None})
         except RailUnavailable as exc:
             # The rail stopped itself (banned line, terminated account): fail
             # loudly and machine-branchably. A retry loop is the operator's
             # problem to fix, never this endpoint's to hide.
             escrow.update_status(message_id, status="failed",
                                  provider_status=f"rail_unavailable:{exc.reason}")
-            refund_all(escrow, rail, message_id, "rail_unavailable")
+            refunded = _refund_quietly(escrow, rail, message_id, "rail_unavailable")
             return error_response(
                 503, "rail_unavailable",
                 f"The rail is down ({exc.reason}); the message was not sent and "
-                f"your postage was refunded.",
+                + ("your postage was refunded."
+                   if refunded else _REFUND_LATER_HINT),
                 extra={"message_id": message_id, "rail_reason": exc.reason,
-                       "refunded": True, "refund_sats": record.held})
+                       "refunded": bool(refunded), "refund_sats":
+                       record.held if refunded else None})
         except Exception as exc:                             # noqa: BLE001
             escrow.update_status(message_id, status="failed",
                                  provider_status=f"transport_exception:{type(exc).__name__}")
-            refund_all(escrow, rail, message_id, "transport_error")
+            refunded = _refund_quietly(escrow, rail, message_id, "transport_error")
             return error_response(
                 502, "transport_error",
-                f"The rail raised {type(exc).__name__}; your postage was refunded.",
-                extra={"message_id": message_id, "refunded": True,
-                       "refund_sats": record.held})
+                f"The rail raised {type(exc).__name__}; "
+                + ("your postage was refunded."
+                   if refunded else _REFUND_LATER_HINT),
+                extra={"message_id": message_id, "refunded": bool(refunded),
+                       "refund_sats": record.held if refunded else None})
 
         if not result.accepted:
             escrow.update_status(message_id, status="failed",
                                  provider_status=result.status or "failed")
-            refund_all(escrow, rail, message_id, "transport_error")
+            refunded = _refund_quietly(escrow, rail, message_id, "transport_error")
             return error_response(
                 502, "transport_error",
-                f"{result.detail or 'The rail refused the message'}; your postage was refunded.",
-                extra={"message_id": message_id, "refunded": True,
-                       "refund_sats": record.held})
+                f"{result.detail or 'The rail refused the message'}; "
+                + ("your postage was refunded."
+                   if refunded else _REFUND_LATER_HINT),
+                extra={"message_id": message_id, "refunded": bool(refunded),
+                       "refund_sats": record.held if refunded else None})
 
         status = result.status if result.status in (
             "queued", "sent", "delivered", "failed") else "queued"

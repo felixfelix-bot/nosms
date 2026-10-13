@@ -69,10 +69,32 @@ def refund_all(store, transport, message_id: str, reason: str, *,
 
 def sweep_refunds(store, transport, *, refund_after_seconds: int = 900,
                   now: float | None = None, limit: int = 500) -> dict:
-    """Refund every message older than the window that is still not delivered."""
+    """Refund every message older than the window that is provably undelivered.
+
+    Refund is a claim about *proof*, never about silence. Three states prove
+    non-delivery, in order of trust:
+
+    1. the row's own ``failed`` verdict — set by the send handler on every
+       failure path (a refused send, a rail exception, a paced rail). The
+       message never left, receipt or no receipt, rail observable or not.
+       This is the F1 case: before it was added, a send that failed before
+       obtaining a receipt was counted ``unobservable`` and skipped by every
+       sweep forever — postage locked in the ledger.
+    2. a polled ``failed`` from the rail (the receipt exists, the rail says
+       it did not deliver);
+    3. an observable rail's silence — a row that is still not ``delivered``
+       on a rail that *can* report delivery, after the window.
+
+    Silence on a rail that cannot report delivery is *never* proof, and a
+    status we could not classify (``unknown``) is *never* proof either: it
+    could mean delivered. The two are counted separately — ``unobservable``
+    (the rail cannot observe) and ``unclassifiable`` (we could not read the
+    answer) — so the report never conflates them.
+    """
     moment = float(now if now is not None else time.time())
     out = {"checked": 0, "refunded": 0, "delivered": 0, "too_early": 0,
-           "skipped_already_refunded": 0, "unobservable": 0, "failed": 0}
+           "skipped_already_refunded": 0, "unobservable": 0, "unclassifiable": 0,
+           "failed": 0}
     observable = receipts_observable(transport) and hasattr(transport, "status")
     for record in store.list_unrefunded(limit=limit):
         if record.refunded:                      # raced with another sweep
@@ -82,16 +104,41 @@ def sweep_refunds(store, transport, *, refund_after_seconds: int = 900,
             out["too_early"] += 1
             continue
         out["checked"] += 1
-        if not observable or not record.provider_message_id:
+        # (1) the row's own recorded verdict outranks anything a later poll
+        # could say: it was written by the handler that saw the send fail.
+        # A refund here needs no receipt — the send never happened.
+        if record.status == "failed":
+            try:
+                if refund_all(store, transport, record.message_id, "failed_send",
+                              now=moment):
+                    out["refunded"] += 1
+                else:
+                    out["skipped_already_refunded"] += 1
+            except Exception:                                # noqa: BLE001
+                out["failed"] += 1
+            continue
+        if not record.provider_message_id or not observable:
             out["unobservable"] += 1
             continue
         try:
             status = resolve(transport.status(record.provider_message_id))
-        except Exception:                                        # noqa: BLE001
+        except Exception:                                    # noqa: BLE001
             out["unobservable"] += 1
             continue
         normalized = str(getattr(status, "normalized", "unknown") or "unknown")
         raw = str(getattr(status, "raw", normalized) or normalized)
+        if normalized == "unknown":
+            # (F2) we cannot classify the rail's answer; it proves nothing.
+            # Never refund on it, never fold it into `unobservable`. The poll
+            # is still persisted (below the guard) — the live status endpoint
+            # persists unknown polls too, and the operator keeps the raw
+            # string — but a terminal verdict is never downgraded by one.
+            if record.status != "delivered" and (normalized != record.status
+                                                 or raw != record.provider_status):
+                store.update_status(record.message_id, status=normalized,
+                                    provider_status=raw)
+            out["unclassifiable"] += 1
+            continue
         if normalized != record.status or raw != record.provider_status:
             store.update_status(record.message_id, status=normalized, provider_status=raw)
         if normalized == "delivered":
@@ -102,6 +149,6 @@ def sweep_refunds(store, transport, *, refund_after_seconds: int = 900,
                 out["refunded"] += 1
             else:
                 out["skipped_already_refunded"] += 1
-        except Exception:                                        # noqa: BLE001
+        except Exception:                                    # noqa: BLE001
             out["failed"] += 1
     return out
