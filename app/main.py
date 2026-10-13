@@ -23,7 +23,8 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import JSONResponse, PlainTextResponse
 
-from .cashu import CashuError, MintClient, decode_token, encode_token, fee_for, split_amounts
+from .cashu import (CashuError, MintClient, decode_token, encode_token,
+                    input_fee_for, split_amounts)
 from .config import Config
 from .errors import HTTP_HINTS, error_response
 from .escrow import EscrowStore
@@ -202,11 +203,17 @@ def create_app(config: Config | dict | None = None, transport=None, mint=None) -
                                   f"retry in a moment.")
 
         # 5. coverage — the sender bears the mint's input fee, we charge the price
+        # The fee is per KEYSET (NUT-02 input_fee_ppk), and a token can span
+        # several keysets with different rates — price each keyset's proofs
+        # with that keyset's rate, or the swap is mis-sized and the mint
+        # rejects it as a spurious 502 (finding F3, glm-5.2 review).
         try:
-            ppk = int(await maybe_await(mint.fee_ppk_for(token_obj.proofs[0]["id"])))
+            ppks: dict[str, int] = {}
+            for keyset_id in {str(p["id"]) for p in token_obj.proofs}:
+                ppks[keyset_id] = int(await maybe_await(mint.fee_ppk_for(keyset_id)))
         except Exception:                                    # noqa: BLE001
-            ppk = 0
-        mint_fee = fee_for(ppk, len(token_obj.proofs))
+            ppks = {}
+        mint_fee = input_fee_for(ppks, token_obj.proofs)
         net = token_obj.amount - mint_fee
         if net < price:
             shortfall = price - net

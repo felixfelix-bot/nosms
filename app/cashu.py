@@ -31,6 +31,7 @@ import hashlib
 import json
 import secrets as _secrets
 import struct
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from math import ceil
 
@@ -177,6 +178,36 @@ def fee_for(ppk: int, n_inputs: int) -> int:
     if ppk <= 0 or n_inputs <= 0:
         return 0
     return ceil(int(ppk) * int(n_inputs) / 1000)
+
+
+def input_fee_for(fee_ppk_by_keyset: Mapping[str, int], proofs: Sequence[dict]) -> int:
+    """NUT-02 input fee for a proof set, priced per keyset like the mints do.
+
+    ``input_fee_ppk`` is a per-keyset property (a rotated keyset carries its
+    own rate), and a token can legitimately carry proofs from several keysets —
+    a v3/v4 mix, or a token assembled across a keyset upgrade. The fee the mint
+    will actually take is computed from EACH keyset's rate for that keyset's
+    proofs, with a single ceil applied to the summed raw fees:
+
+        fee = ceil(sum(input_fee_ppk(ks_i) * n_i) / 1000)
+
+    That one formula is what both reference mints charge — cdk-mintd
+    (``calculate_fee``: per-keyset raw fees summed, then
+    ``(sum + 999) // 1000``) and nutshell (``get_fees_for_proofs``:
+    ``(sum(ppk per proof) + 999) // 1000``) — and it is what their swap
+    balance check enforces (inputs = outputs + fee), so pricing it any other
+    way gets the swap rejected. Summing per-keyset *ceils* instead
+    (``fee_for`` per group) would overprice the fractional case: two keysets
+    at 100 ppk holding 2 and 3 proofs take 1 sat at the mint, not 2.
+
+    ``fee_ppk_by_keyset`` maps keyset id -> ppk; every proof's keyset must be
+    present or the keyset is priced 0 (callers pass the mint's own published
+    rates, so an unknown keyset means the mint has no fee for it).
+    """
+    raw = sum(int(fee_ppk_by_keyset.get(str(p["id"]), 0)) for p in proofs)
+    if raw <= 0:
+        return 0
+    return ceil(raw / 1000)
 
 
 # --------------------------------------------------------------------------- #
