@@ -1,5 +1,25 @@
 # PROGRESS — SMS CVM end-to-end + public mint (2026-10-12)
 
+## 2026-10-13 — task t_fde3f7cf: mint fee priced per keyset, not proofs[0] (F3, PR #14)
+
+- F3 (spurious 502 on a mixed-keyset token): the escrow path priced the mint's
+  NUT-02 input fee from `proofs[0]["id"]` only and applied that one keyset's
+  `input_fee_ppk` to every proof. `input_fee_ppk` is per KEYSET, and a token
+  can span two keysets with different rates (v3/v4 mix, or assembled across a
+  rotation) → swap mis-sized → the mint's balance check rejects it as an
+  opaque `502 mint_error`. No funds lost, but a legitimate payer was refused.
+- `input_fee_for(ppks, proofs)` in app/cashu.py prices each keyset's proofs
+  with its own rate, then ONE ceil over the summed raw fees — exactly what
+  cdk-mintd `calculate_fee` and nutshell `get_fees_for_proofs` charge
+  (`(sum(ppk_i*n_i) + 999) // 1000`). Summing per-keyset CEILS (the card's
+  sketch) would overprice the fractional case (2+3 proofs across two 100-ppk
+  keysets = 1 sat at the mint, not 2) — same 502, other direction.
+- Fixed at all three `proofs[0]` call sites: HTTP send (app/main.py), CVM
+  sms.send (app/cvm_tools.py), fixture burn helper (scripts/make_v4_fixture.py).
+- StubMint models per-keyset fees; 3 RED-on-master tests now GREEN (2 in
+  test_send.py, 1 in test_cvm_tools.py) + formula pins in test_cashu.py.
+  Suite 825 passed, coverage 82.64% (gate ≥80%), gitleaks clean.
+
 ## DONE and PUSHED
 
 ### nosms (felixfelix-bot/nosms, master)
